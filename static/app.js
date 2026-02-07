@@ -120,7 +120,8 @@ function showLoading(message = 'Processing...') {
         document.body.appendChild(overlay);
     }
 
-    document.getElementById('loading-message').textContent = message;
+    const msg = document.getElementById('loading-text') || document.getElementById('loading-message');
+    if (msg) msg.textContent = message;
     overlay.classList.remove('hidden');
 }
 
