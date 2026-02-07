@@ -157,7 +157,7 @@ async def explore_data(
     # Prior conversation context
     if conversation_history:
         history_text = "\n".join(
-            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            f"{'User' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')}"
             for m in conversation_history
         )
         prompt_sections.append(
@@ -228,7 +228,7 @@ async def build_data_model(
 
     # Build the conversation transcript
     transcript = "\n".join(
-        f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+        f"{'User' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')}"
         for m in conversation_history
     )
 

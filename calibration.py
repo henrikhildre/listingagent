@@ -131,7 +131,7 @@ def _build_conversation_prompt(
 
     for msg in conversation_history:
         role = msg.get("role", "user").upper()
-        parts.append(f"{role}: {msg['content']}")
+        parts.append(f"{role}: {msg.get('content', '')}")
 
     if user_message:
         parts.append(f"USER: {user_message}")
