@@ -619,11 +619,26 @@ button:not(:disabled):active {
 /* ============================================
    PHASE BANNERS
    ============================================ */
+.phase-banner-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 2rem 0;
+}
+
+.phase-banner-divider {
+    width: 60%;
+    max-width: 20rem;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #cbd5e1, transparent);
+    margin-bottom: 1.5rem;
+}
+
 .phase-banner {
     background: linear-gradient(135deg, #eff6ff, #f0f9ff);
     border: 1px solid #bfdbfe;
     border-radius: 0.75rem;
-    padding: 0.75rem 1.25rem;
+    padding: 1rem 1.5rem;
     max-width: 28rem;
     width: 100%;
 }

@@ -498,7 +498,7 @@ async function startDiscovery() {
 /**
  * Add a chat message bubble to the conversation area.
  */
-function addMessage(role, content) {
+function addMessage(role, content, { html = false } = {}) {
     const chatMessages = document.getElementById('chat-messages');
     if (!chatMessages) return;
 
@@ -507,7 +507,7 @@ function addMessage(role, content) {
 
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble';
-    bubble.innerHTML = formatMessage(content);
+    bubble.innerHTML = html ? content : formatMessage(content);
 
     wrapper.appendChild(bubble);
     chatMessages.appendChild(wrapper);
@@ -565,8 +565,9 @@ function addPhaseBanner(phase) {
     if (!b) return;
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'flex justify-center my-5';
+    wrapper.className = 'phase-banner-wrapper';
     wrapper.innerHTML = `
+        <div class="phase-banner-divider"></div>
         <div class="phase-banner">
             <div class="flex items-center gap-3">
                 <span class="phase-banner-step">${b.step}</span>
@@ -1051,68 +1052,91 @@ async function* readSSE(response) {
  */
 function buildRecipeTestSummary(testResults) {
     if (!testResults || testResults.length === 0) {
-        return 'I drafted a recipe but could not test it on any samples. You can approve it or provide feedback.';
+        return { html: false, content: 'I drafted a recipe but could not test it on any samples. You can approve it or provide feedback.' };
     }
 
-    const lines = ['Here are the test results for the recipe:\n'];
+    const esc = s => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    let cards = '<p style="margin-bottom:0.75rem">Here are the test results for the recipe:</p>';
 
     testResults.forEach((tr, i) => {
-        const name = tr.product_name || tr.product_id || `Sample ${i + 1}`;
+        const name = esc(tr.product_name || tr.product_id || `Sample ${i + 1}`);
         const score = tr.validation?.score ?? '?';
-        const passed = tr.validation?.passed ? 'Passed' : 'Needs work';
-        const title = tr.listing?.title || '(no title generated)';
+        const passed = tr.validation?.passed;
+        const title = esc(tr.listing?.title || '(no title generated)');
         const description = tr.listing?.description || '';
+        const tags = tr.listing?.tags || [];
+        const judgeCriteria = tr.validation?.judge_criteria || [];
+        const codeIssues = tr.validation?.code_issues || [];
 
-        // Header with score
-        lines.push(`---`);
-        lines.push(`### ${name} — ${score}/100 (${passed})\n`);
-        lines.push(`**Title:** "${title}"\n`);
+        const badgeColor = passed ? '#059669' : '#d97706';
+        const badgeLabel = passed ? 'Passed' : 'Needs work';
 
-        // Show description preview (first ~200 chars)
+        let card = `<div class="test-result-card">`;
+
+        // Header: name + score badge
+        card += `<div class="test-result-header">`;
+        card += `<span class="test-result-name">${name}</span>`;
+        card += `<span class="test-result-score" style="background:${badgeColor}">${score}/100 &middot; ${badgeLabel}</span>`;
+        card += `</div>`;
+
+        // Title
+        card += `<div class="test-result-title">${title}</div>`;
+
+        // Description preview
         if (description) {
             const preview = description.length > 250
-                ? description.slice(0, 250) + '...'
-                : description;
-            lines.push(`**Description:**`);
-            lines.push(`> ${preview.replace(/\n/g, '\n> ')}\n`);
+                ? esc(description.slice(0, 250)) + '&hellip;'
+                : esc(description);
+            card += `<div class="test-result-description">${preview}</div>`;
         }
 
         // Tags
-        const tags = tr.listing?.tags || [];
         if (tags.length > 0) {
-            lines.push(`**Tags:** ${tags.join(', ')}\n`);
+            card += `<div class="test-result-tags">`;
+            for (const tag of tags) {
+                card += `<span class="test-result-tag">${esc(tag)}</span>`;
+            }
+            card += `</div>`;
         }
 
         // Price
         if (tr.listing?.suggested_price) {
-            lines.push(`**Suggested price:** $${tr.listing.suggested_price}\n`);
+            card += `<div class="test-result-price">$${esc(String(tr.listing.suggested_price))}</div>`;
         }
 
-        // Judge criteria results (pass/fail badges)
-        const judgeCriteria = tr.validation?.judge_criteria || [];
+        // Judge criteria badges
         if (judgeCriteria.length > 0) {
-            const judgePassed = judgeCriteria.filter(c => c.pass).length;
-            lines.push(`**Quality checks:** ${judgePassed}/${judgeCriteria.length} passed`);
+            card += `<div class="test-result-criteria">`;
             for (const c of judgeCriteria) {
-                const icon = c.pass ? '&check;' : '&cross;';
-                const label = c.criterion.replace(/_/g, ' ');
-                lines.push(`- ${icon} ${label}${!c.pass ? ': ' + c.reasoning.slice(0, 100) : ''}`);
+                const cls = c.pass ? 'criterion-pass' : 'criterion-fail';
+                const icon = c.pass ? '&#10003;' : '&#10007;';
+                const label = (c.label || c.criterion || '').replace(/_/g, ' ');
+                const tip = c.pass ? '' : ` title="${esc(c.reasoning?.slice(0, 150))}"`;
+                card += `<span class="test-result-criterion ${cls}"${tip}>${icon} ${esc(label)}</span>`;
             }
-            lines.push('');
+            card += `</div>`;
         }
 
         // Structural issues
-        const codeIssues = tr.validation?.code_issues || [];
         if (codeIssues.length > 0) {
-            lines.push(`**Structural issues:** ${codeIssues.join(', ')}\n`);
+            card += `<div class="test-result-issues">`;
+            for (const issue of codeIssues) {
+                card += `<span class="test-result-issue">&#9888; ${esc(issue)}</span>`;
+            }
+            card += `</div>`;
         }
+
+        card += `</div>`;
+        cards += card;
     });
 
-    const avgScore = testResults.reduce((sum, tr) => sum + (tr.validation?.score || 0), 0) / testResults.length;
-    lines.push(`---\n**Average score: ${Math.round(avgScore)}/100**`);
-    lines.push('\nReview the full results in the right panel. You can approve the recipe or give me feedback to refine it.');
+    // Average score footer
+    const avgScore = Math.round(testResults.reduce((sum, tr) => sum + (tr.validation?.score || 0), 0) / testResults.length);
+    cards += `<div class="test-result-avg">Average score: <strong>${avgScore}/100</strong></div>`;
+    cards += `<p style="margin-top:0.5rem;color:var(--color-text-secondary);font-size:0.85rem">Review the full results in the right panel. You can approve the recipe or give me feedback to refine it.</p>`;
 
-    return lines.join('\n');
+    return { html: true, content: cards };
 }
 
 /**
