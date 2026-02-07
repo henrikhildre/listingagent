@@ -146,14 +146,7 @@ async def draft_recipe(
     # Build a summary of available product fields from the data model
     sample_products = data_model.get("products", [])[:3]
 
-    # Use dynamically discovered fields when available, fall back to inference
     fields_discovered = data_model.get("fields_discovered", [])
-    if not fields_discovered:
-        for p in data_model.get("products", []):
-            fields_discovered = [
-                k for k in p.keys() if k not in ("id", "source", "image_files")
-            ]
-            break
 
     available_fields = {"product_id", "product_image"} | set(fields_discovered)
     fields_list = ", ".join(sorted(available_fields))
