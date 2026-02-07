@@ -136,6 +136,52 @@ function hideLoading() {
 }
 
 /**
+ * Show an inline progress indicator in the chat (spinner + status text).
+ * Returns the wrapper element for later updates/removal.
+ */
+function showInlineProgress(text) {
+    const chatMessages = document.getElementById('chat-messages');
+    if (!chatMessages) return null;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'inline-progress';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'inline-progress-bubble';
+    bubble.innerHTML = `
+        <div class="spinner spinner-sm"></div>
+        <span class="inline-progress-text">${escapeHtml(text)}</span>
+    `;
+
+    wrapper.appendChild(bubble);
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    return wrapper;
+}
+
+/**
+ * Update the text of an inline progress indicator.
+ */
+function updateInlineProgress(el, text) {
+    if (!el) return;
+    const span = el.querySelector('.inline-progress-text');
+    if (span) span.textContent = text;
+
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Remove an inline progress indicator from the chat.
+ */
+function removeInlineProgress(el) {
+    if (el && el.parentNode) {
+        el.parentNode.removeChild(el);
+    }
+}
+
+/**
  * Format file size in human-readable form.
  */
 function formatFileSize(bytes) {
@@ -360,9 +406,10 @@ async function uploadFiles() {
         });
 
         state.jobId = result.job_id;
+        hideLoading();
         showToast(`${state.uploadedFiles.length} files uploaded successfully.`, 'success');
 
-        // Transition to discovery
+        // Transition to discovery (inline progress used inside startDiscovery)
         await startDiscovery();
     } catch (error) {
         hideLoading();
@@ -380,8 +427,10 @@ async function loadDemo() {
         const result = await api('/api/load-demo', { method: 'POST' });
 
         state.jobId = result.job_id;
+        hideLoading();
         showToast(`Demo loaded: ${result.file_count} files.`, 'success');
 
+        // Transition to discovery (inline progress used inside startDiscovery)
         await startDiscovery();
     } catch (error) {
         hideLoading();
@@ -397,10 +446,11 @@ async function startDiscovery() {
     showView('chat-view');
     updatePhaseIndicator('DISCOVER');
     addPhaseBanner('DISCOVER');
-    showLoading('Analyzing your data...');
 
     // Disable chat input during discovery
     setChatInputEnabled(false);
+
+    const progress = showInlineProgress('Analyzing your uploaded files...');
 
     try {
         const result = await api('/api/discover', {
@@ -408,7 +458,7 @@ async function startDiscovery() {
             body: JSON.stringify({ job_id: state.jobId }),
         });
 
-        hideLoading();
+        removeInlineProgress(progress);
 
         // Show discovery response in chat
         addMessage('assistant', result.response);
@@ -434,7 +484,7 @@ async function startDiscovery() {
         });
 
     } catch (error) {
-        hideLoading();
+        removeInlineProgress(progress);
         setChatInputEnabled(true);
         showToast('Discovery failed: ' + error.message, 'error');
         addMessage('assistant', 'Sorry, I encountered an error analyzing your data. Please try sending a message with more details about your files.');
@@ -692,7 +742,7 @@ async function handleInterviewChat(message) {
  * Handle chat during recipe testing — user provides feedback to refine the recipe.
  */
 async function handleRecipeChat(message) {
-    showLoading('Refining recipe based on your feedback...');
+    const progress = showInlineProgress('Refining recipe based on your feedback...');
 
     try {
         const result = await api('/api/chat', {
@@ -704,7 +754,7 @@ async function handleRecipeChat(message) {
             }),
         });
 
-        hideLoading();
+        removeInlineProgress(progress);
 
         addMessage('assistant', result.response);
         state.conversationHistory.push({
@@ -734,7 +784,7 @@ async function handleRecipeChat(message) {
         });
 
     } catch (error) {
-        hideLoading();
+        removeInlineProgress(progress);
         throw error;
     }
 }
@@ -782,8 +832,8 @@ function removeTypingIndicator(indicator) {
  * Finalize the data model and transition to the interview phase.
  */
 async function buildDataModel() {
-    showLoading('Building data model...');
     setChatInputEnabled(false);
+    const progress = showInlineProgress('Finalizing data model...');
 
     try {
         const result = await api('/api/build-data-model', {
@@ -795,18 +845,17 @@ async function buildDataModel() {
         });
 
         state.dataModel = result.data_model;
-        hideLoading();
 
         const productCount = (state.dataModel.products || []).length;
-        addSystemMessage(`Data model built: ${productCount} products mapped.`);
+        updateInlineProgress(progress, `Mapped ${productCount} products — starting brand profile...`);
 
         updateContextPanel();
 
-        // Transition to interview
-        await startInterview();
+        // Transition to interview (progress element passed for continuity)
+        await startInterview(progress);
 
     } catch (error) {
-        hideLoading();
+        removeInlineProgress(progress);
         setChatInputEnabled(true);
         showToast('Failed to build data model: ' + error.message, 'error');
         addMessage('assistant', 'I had trouble finalizing the data model. Could you provide more details about how your files are organized?');
@@ -820,13 +869,15 @@ async function buildDataModel() {
 /**
  * Start the interview phase. Calls the backend to get the opening message.
  */
-async function startInterview() {
+async function startInterview(existingProgress) {
     state.phase = 'INTERVIEW';
     updatePhaseIndicator('INTERVIEW');
     addPhaseBanner('INTERVIEW');
 
-    showLoading('Starting style interview...');
     setChatInputEnabled(false);
+
+    const progress = existingProgress || showInlineProgress('Preparing interview questions...');
+    updateInlineProgress(progress, 'AI is preparing interview questions...');
 
     try {
         // Send a special initial message to trigger the interview
@@ -839,7 +890,7 @@ async function startInterview() {
             }),
         });
 
-        hideLoading();
+        removeInlineProgress(progress);
 
         addMessage('assistant', result.response);
         state.conversationHistory.push({
@@ -850,7 +901,7 @@ async function startInterview() {
         setChatInputEnabled(true);
 
     } catch (error) {
-        hideLoading();
+        removeInlineProgress(progress);
         setChatInputEnabled(true);
         showToast('Failed to start interview: ' + error.message, 'error');
     }
@@ -868,46 +919,130 @@ async function startRecipeBuilding() {
     updatePhaseIndicator('RECIPE_TEST');
     addPhaseBanner('RECIPE_TEST');
 
-    showLoading('Drafting your listing recipe...');
     setChatInputEnabled(false);
+    const progress = showInlineProgress('Drafting listing template...');
 
     try {
-        // The backend test-recipe endpoint drafts (if not already drafted) then tests
-        const result = await api('/api/test-recipe', {
+        const response = await fetch('/api/auto-refine', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ job_id: state.jobId }),
         });
 
-        hideLoading();
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `Request failed (${response.status})`);
+        }
 
-        state.recipe = result.recipe;
-        state.testResults = result.test_results || [];
-
-        // Announce in chat
-        addMessage('assistant', buildRecipeTestSummary(state.testResults));
-
-        state.conversationHistory.push({
-            role: 'assistant',
-            content: 'Recipe drafted and tested on sample products. See the results in the panel.',
-        });
-
-        updateContextPanel();
-        setChatInputEnabled(true);
-
-        // Show action buttons
-        showActionButton('approve-recipe-btn', 'Approve Recipe', async () => {
-            await approveRecipe();
-        });
-
-        showActionButton('test-recipe-btn', 'Re-test Recipe', async () => {
-            await testRecipe();
-        });
-
+        for await (const event of readSSE(response)) {
+            if (event.type === 'progress') {
+                updateInlineProgress(progress, event.data.text);
+            } else if (event.type === 'score') {
+                const { attempt, avg, all_passed } = event.data;
+                const status = all_passed ? 'All passed' : 'Some issues remain';
+                updateInlineProgress(progress,
+                    `Attempt ${attempt}: avg ${avg}/100 — ${status}`);
+            } else if (event.type === 'complete') {
+                removeInlineProgress(progress);
+                handleAutoRefineComplete(event.data);
+            } else if (event.type === 'error') {
+                removeInlineProgress(progress);
+                showToast('Auto-refine error: ' + event.data.text, 'error');
+                addMessage('assistant', 'I ran into an issue building the recipe. Could you describe what kind of listing format you prefer?');
+                setChatInputEnabled(true);
+            }
+        }
     } catch (error) {
-        hideLoading();
+        removeInlineProgress(progress);
         setChatInputEnabled(true);
         showToast('Recipe building failed: ' + error.message, 'error');
         addMessage('assistant', 'I had trouble creating the recipe. Could you describe what kind of listing format you prefer?');
+    }
+}
+
+/**
+ * Handle the final result from the auto-refine SSE stream.
+ */
+function handleAutoRefineComplete(data) {
+    state.recipe = data.recipe;
+    state.testResults = data.test_results || [];
+    updateContextPanel();
+
+    if (data.reached_threshold) {
+        // Good enough — show results and approve button
+        addMessage('assistant', buildRecipeTestSummary(state.testResults)
+            + `\n\nThe recipe reached **${data.avg_score}/100** average after ${data.iterations} iteration${data.iterations > 1 ? 's' : ''}. Looking good!`);
+    } else {
+        // Stuck — show remaining issues, ask for user guidance
+        let issueText = `After ${data.iterations} auto-refinement attempt${data.iterations > 1 ? 's' : ''}, the recipe is at **${data.avg_score}/100** average. Some issues remain:\n\n`;
+        for (const item of (data.remaining_issues || [])) {
+            issueText += `**${item.product}:** ${item.issues.join(', ')}\n`;
+        }
+        issueText += '\nYou can give me specific guidance to improve, or approve the recipe as-is.';
+        addMessage('assistant', issueText);
+    }
+
+    state.conversationHistory.push({
+        role: 'assistant',
+        content: `Recipe tested (avg ${data.avg_score}/100, ${data.iterations} iterations).`,
+    });
+
+    setChatInputEnabled(true);
+
+    // Show action buttons
+    showActionButton('approve-recipe-btn',
+        data.reached_threshold ? 'Approve & Start Processing' : 'Approve As-Is',
+        async () => { await approveRecipe(); });
+
+    showActionButton('test-recipe-btn', 'Re-test Recipe', async () => {
+        await testRecipe();
+    });
+}
+
+/**
+ * Async generator that parses Server-Sent Events from a fetch Response.
+ */
+async function* readSSE(response) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete events (separated by double newlines)
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop(); // Keep incomplete part in buffer
+
+            for (const part of parts) {
+                if (!part.trim()) continue;
+
+                let eventType = 'message';
+                let eventData = '';
+
+                for (const line of part.split('\n')) {
+                    if (line.startsWith('event: ')) {
+                        eventType = line.slice(7);
+                    } else if (line.startsWith('data: ')) {
+                        eventData = line.slice(6);
+                    }
+                }
+
+                if (eventData) {
+                    try {
+                        yield { type: eventType, data: JSON.parse(eventData) };
+                    } catch (e) {
+                        console.warn('Failed to parse SSE data:', eventData);
+                    }
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock();
     }
 }
 
@@ -925,21 +1060,57 @@ function buildRecipeTestSummary(testResults) {
         const name = tr.product_name || tr.product_id || `Sample ${i + 1}`;
         const score = tr.validation?.score ?? '?';
         const passed = tr.validation?.passed ? 'Passed' : 'Needs work';
-        const issues = tr.validation?.issues || [];
         const title = tr.listing?.title || '(no title generated)';
+        const description = tr.listing?.description || '';
 
-        lines.push(`**${name}** - Score: ${score}/100 (${passed})`);
-        lines.push(`  Title: "${title}"`);
+        // Header with score
+        lines.push(`---`);
+        lines.push(`### ${name} — ${score}/100 (${passed})\n`);
+        lines.push(`**Title:** "${title}"\n`);
 
-        if (issues.length > 0) {
-            lines.push(`  Issues: ${issues.join(', ')}`);
+        // Show description preview (first ~200 chars)
+        if (description) {
+            const preview = description.length > 250
+                ? description.slice(0, 250) + '...'
+                : description;
+            lines.push(`**Description:**`);
+            lines.push(`> ${preview.replace(/\n/g, '\n> ')}\n`);
         }
-        lines.push('');
+
+        // Tags
+        const tags = tr.listing?.tags || [];
+        if (tags.length > 0) {
+            lines.push(`**Tags:** ${tags.join(', ')}\n`);
+        }
+
+        // Price
+        if (tr.listing?.suggested_price) {
+            lines.push(`**Suggested price:** $${tr.listing.suggested_price}\n`);
+        }
+
+        // Judge criteria results (pass/fail badges)
+        const judgeCriteria = tr.validation?.judge_criteria || [];
+        if (judgeCriteria.length > 0) {
+            const judgePassed = judgeCriteria.filter(c => c.pass).length;
+            lines.push(`**Quality checks:** ${judgePassed}/${judgeCriteria.length} passed`);
+            for (const c of judgeCriteria) {
+                const icon = c.pass ? '&check;' : '&cross;';
+                const label = c.criterion.replace(/_/g, ' ');
+                lines.push(`- ${icon} ${label}${!c.pass ? ': ' + c.reasoning.slice(0, 100) : ''}`);
+            }
+            lines.push('');
+        }
+
+        // Structural issues
+        const codeIssues = tr.validation?.code_issues || [];
+        if (codeIssues.length > 0) {
+            lines.push(`**Structural issues:** ${codeIssues.join(', ')}\n`);
+        }
     });
 
     const avgScore = testResults.reduce((sum, tr) => sum + (tr.validation?.score || 0), 0) / testResults.length;
-    lines.push(`**Average score: ${Math.round(avgScore)}/100**`);
-    lines.push('\nReview the results in the right panel. You can approve the recipe or give me feedback to refine it.');
+    lines.push(`---\n**Average score: ${Math.round(avgScore)}/100**`);
+    lines.push('\nReview the full results in the right panel. You can approve the recipe or give me feedback to refine it.');
 
     return lines.join('\n');
 }
@@ -948,9 +1119,9 @@ function buildRecipeTestSummary(testResults) {
  * Test (or re-test) the current recipe.
  */
 async function testRecipe() {
-    showLoading('Testing recipe on sample products...');
     hideActionButton('test-recipe-btn');
     hideActionButton('approve-recipe-btn');
+    const progress = showInlineProgress('Testing recipe on sample products...');
 
     try {
         const result = await api('/api/test-recipe', {
@@ -958,7 +1129,7 @@ async function testRecipe() {
             body: JSON.stringify({ job_id: state.jobId }),
         });
 
-        hideLoading();
+        removeInlineProgress(progress);
 
         state.recipe = result.recipe;
         state.testResults = result.test_results || [];
@@ -981,7 +1152,7 @@ async function testRecipe() {
         });
 
     } catch (error) {
-        hideLoading();
+        removeInlineProgress(progress);
         showToast('Testing failed: ' + error.message, 'error');
     }
 }
@@ -990,9 +1161,9 @@ async function testRecipe() {
  * Approve the recipe and transition to execution.
  */
 async function approveRecipe() {
-    showLoading('Locking recipe...');
     hideActionButton('approve-recipe-btn');
     hideActionButton('test-recipe-btn');
+    const progress = showInlineProgress('Locking recipe...');
 
     try {
         const result = await api('/api/approve-recipe', {
@@ -1001,7 +1172,7 @@ async function approveRecipe() {
         });
 
         state.recipe = result.recipe;
-        hideLoading();
+        removeInlineProgress(progress);
 
         addSystemMessage('Recipe approved! Starting batch execution...');
 
@@ -1009,7 +1180,7 @@ async function approveRecipe() {
         await startExecution();
 
     } catch (error) {
-        hideLoading();
+        removeInlineProgress(progress);
         showToast('Failed to approve recipe: ' + error.message, 'error');
     }
 }
@@ -1488,7 +1659,6 @@ function renderTestResultsSection() {
         const name = tr.product_name || tr.product_id || 'Unknown';
         const score = tr.validation?.score ?? 0;
         const passed = tr.validation?.passed;
-        const issues = tr.validation?.issues || [];
         const listing = tr.listing || {};
 
         const scoreColor = score >= 80 ? 'bg-green-100 text-green-700'
@@ -1499,11 +1669,58 @@ function renderTestResultsSection() {
             ? '<span class="badge badge-success text-xs">Passed</span>'
             : '<span class="badge badge-error text-xs">Needs work</span>';
 
-        let issuesHtml = '';
-        if (issues.length > 0) {
-            issuesHtml = `
-                <div class="mt-2 space-y-1">
-                    ${issues.map(i => `<div class="text-xs text-red-500">- ${escapeHtml(i)}</div>`).join('')}
+        // Title
+        const titleHtml = listing.title
+            ? `<div class="text-xs font-medium text-slate-700 mb-1">"${escapeHtml(listing.title)}"</div>`
+            : '';
+
+        // Description preview (truncated)
+        const desc = listing.description || '';
+        const descPreview = desc.length > 150 ? desc.slice(0, 150) + '...' : desc;
+        const descHtml = desc
+            ? `<div class="text-xs text-slate-500 mb-2 leading-relaxed">${escapeHtml(descPreview)}</div>`
+            : '';
+
+        // Tags
+        const tags = listing.tags || [];
+        const tagsHtml = tags.length > 0
+            ? `<div class="flex flex-wrap gap-1 mb-2">${tags.slice(0, 8).map(t =>
+                `<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">${escapeHtml(t)}</span>`
+            ).join('')}${tags.length > 8 ? `<span class="text-[10px] text-slate-400">+${tags.length - 8}</span>` : ''}</div>`
+            : '';
+
+        // Price
+        const priceHtml = listing.suggested_price
+            ? `<div class="text-xs text-slate-500 mb-2">Price: <span class="font-semibold text-slate-700">$${listing.suggested_price}</span></div>`
+            : '';
+
+        // Judge criteria badges
+        const judgeCriteria = tr.validation?.judge_criteria || [];
+        let judgeHtml = '';
+        if (judgeCriteria.length > 0) {
+            const judgePassed = judgeCriteria.filter(c => c.pass).length;
+            judgeHtml = `
+                <div class="mt-2 pt-2 border-t border-slate-100">
+                    <div class="text-[10px] text-slate-400 mb-1 uppercase tracking-wide">Quality ${judgePassed}/${judgeCriteria.length}</div>
+                    <div class="flex flex-wrap gap-1">
+                        ${judgeCriteria.map(c => {
+                            const color = c.pass ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600';
+                            const icon = c.pass ? '&#10003;' : '&#10007;';
+                            const label = c.criterion.replace(/_/g, ' ');
+                            return `<span class="text-[10px] px-1.5 py-0.5 rounded ${color}" title="${escapeHtml(c.reasoning || '')}">${icon} ${label}</span>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Structural issues
+        const codeIssues = tr.validation?.code_issues || [];
+        let codeIssuesHtml = '';
+        if (codeIssues.length > 0) {
+            codeIssuesHtml = `
+                <div class="mt-1.5 space-y-0.5">
+                    ${codeIssues.map(i => `<div class="text-[10px] text-red-500">- ${escapeHtml(i)}</div>`).join('')}
                 </div>
             `;
         }
@@ -1514,9 +1731,13 @@ function renderTestResultsSection() {
                     <span class="text-sm font-medium truncate">${escapeHtml(name)}</span>
                     <span class="text-xs font-bold px-2 py-0.5 rounded-full ${scoreColor}">${score}/100</span>
                 </div>
-                ${listing.title ? `<div class="text-xs text-slate-500 truncate mb-1">"${escapeHtml(listing.title)}"</div>` : ''}
+                ${titleHtml}
+                ${descHtml}
+                ${tagsHtml}
+                ${priceHtml}
                 ${statusBadge}
-                ${issuesHtml}
+                ${codeIssuesHtml}
+                ${judgeHtml}
             </div>
         `;
     });

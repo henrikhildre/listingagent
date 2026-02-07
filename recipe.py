@@ -11,6 +11,7 @@ A recipe consists of three artifacts:
 Workflow: draft -> test on diverse samples -> refine based on feedback -> approve & lock.
 """
 
+import asyncio
 import json
 import logging
 import random
@@ -413,15 +414,24 @@ async def _test_single_product(
         thinking_level="medium",
     )
 
-    # 4. Run validation locally
-    validation = run_validation(listing, style_profile, recipe.get("validation_code", ""))
+    # 4. Run code-based validation locally
+    code_validation = run_validation(listing, style_profile, recipe.get("validation_code", ""))
+
+    # 5. Run LLM judge criteria in parallel
+    judge_result = await llm_judge_listing(listing, style_profile, product)
+
+    # 6. Combine both validation layers
+    validation = combine_validation(code_validation, judge_result)
 
     product_id = product.get("id", "unknown")
     logger.info(
-        "Tested product %s: score=%d, passed=%s",
+        "Tested product %s: score=%d, passed=%s (code: %d issues, judge: %d/%d)",
         product_id,
         validation.get("score", 0),
         validation.get("passed", False),
+        len(code_validation.get("issues", [])),
+        judge_result.get("passed_count", 0),
+        judge_result.get("total_count", 0),
     )
 
     return {
@@ -592,6 +602,53 @@ Respond with EXACTLY this JSON structure (no markdown fencing):
     )
 
     return updated_recipe
+
+
+# ---------------------------------------------------------------------------
+# 3b. build_auto_feedback
+# ---------------------------------------------------------------------------
+
+def build_auto_feedback(test_results: list[dict]) -> str:
+    """
+    Construct synthetic user feedback from test result issues.
+    Uses both code-based issues and LLM judge reasoning for rich feedback.
+    """
+    lines = ["The following issues were found during automated testing:\n"]
+
+    for tr in test_results:
+        name = tr.get("product_name") or tr.get("product_id") or "Unknown"
+        validation = tr.get("validation", {})
+        score = validation.get("score", 0)
+
+        # Code-based structural issues
+        code_issues = validation.get("code_issues", validation.get("issues", []))
+        if code_issues:
+            lines.append(f"**{name}** ({score}/100) — Structural issues:")
+            for issue in code_issues:
+                lines.append(f"  - {issue}")
+
+        # LLM judge failures (more actionable feedback)
+        judge_criteria = validation.get("judge_criteria", [])
+        failed_criteria = [c for c in judge_criteria if not c.get("pass", True)]
+        if failed_criteria:
+            if not code_issues:
+                lines.append(f"**{name}** ({score}/100) — Quality issues:")
+            else:
+                lines.append(f"  Quality issues:")
+            for c in failed_criteria:
+                lines.append(f"  - [{c['criterion']}] {c.get('reasoning', 'Failed')[:200]}")
+
+        if not code_issues and not failed_criteria and not validation.get("passed", True):
+            lines.append(f"- {name} ({score}/100): Failed validation")
+
+        if code_issues or failed_criteria:
+            lines.append("")
+
+    lines.append(
+        "Please fix the recipe to address these issues. "
+        "Focus on the most common problems first."
+    )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -831,4 +888,190 @@ def _basic_validation(listing: dict, style_profile: dict) -> dict:
         "passed": len(issues) == 0,
         "score": score,
         "issues": issues,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 7. LLM-as-Judge evaluation
+# ---------------------------------------------------------------------------
+
+# Each criterion is a focused binary check with chain-of-thought.
+# Using decomposed criteria avoids the "everything is 70-80%" problem.
+
+JUDGE_CRITERIA = {
+    "brand_voice_match": {
+        "question": "Does the listing's tone, vocabulary, and style match the seller's brand voice?",
+        "focus": "Compare the listing's writing style against the style profile. Look at formality level, enthusiasm, use of jargon, sentence structure.",
+    },
+    "description_completeness": {
+        "question": "Does the description cover the key product attributes visible in the data?",
+        "focus": "Check that important product details (material, size, condition, features) from the metadata are mentioned. Missing key selling points is a fail.",
+    },
+    "tag_relevance": {
+        "question": "Are the tags relevant search terms that a real buyer would use on this platform?",
+        "focus": "Tags should be terms buyers actually search for. Generic filler tags ('nice', 'great') or irrelevant terms are a fail. Platform-specific conventions matter.",
+    },
+    "persuasiveness": {
+        "question": "Would this listing compel the target buyer to click and consider purchasing?",
+        "focus": "Evaluate whether the listing creates desire. Does it highlight benefits, not just features? Is the title eye-catching? Would this stand out in search results?",
+    },
+    "image_text_consistency": {
+        "question": "Does the text description accurately reflect what the product data and metadata suggest about this product?",
+        "focus": "The description should not invent features or details that aren't supported by the product data. Hallucinated claims are a fail.",
+    },
+}
+
+
+async def _judge_single_criterion(
+    criterion_name: str,
+    criterion: dict,
+    listing: dict,
+    style_profile: dict,
+    product: dict,
+) -> dict:
+    """
+    Run one LLM judge criterion. Returns {pass, reasoning, criterion}.
+    Uses chain-of-thought: reasoning BEFORE verdict.
+    """
+    platform = style_profile.get("platform", "marketplace")
+
+    prompt = f"""You are evaluating a product listing for quality.
+
+## Criterion: {criterion["question"]}
+{criterion["focus"]}
+
+## Style Profile
+- Platform: {platform}
+- Brand voice: {style_profile.get("brand_voice", "N/A")}
+- Target buyer: {style_profile.get("target_buyer", "N/A")}
+- Seller type: {style_profile.get("seller_type", "N/A")}
+- Always mention: {", ".join(style_profile.get("always_mention", [])) or "N/A"}
+
+## Product Data
+- Name: {product.get("name", "N/A")}
+- Category: {product.get("category", "N/A")}
+- Price: {product.get("price", "N/A")}
+- Metadata: {json.dumps(product.get("metadata", {}), default=str)}
+
+## Generated Listing
+- Title: {listing.get("title", "")}
+- Description: {listing.get("description", "")}
+- Tags: {", ".join(listing.get("tags", []))}
+- Suggested price: {listing.get("suggested_price", "N/A")}
+
+## Instructions
+1. First, analyze the listing against this specific criterion step by step.
+2. Then give your verdict.
+
+Important: A longer listing is NOT automatically better. Evaluate based on quality and relevance, not length.
+
+Respond with EXACTLY this JSON (no markdown fencing):
+{{"reasoning": "your step-by-step analysis...", "pass": true_or_false}}"""
+
+    try:
+        result = await generate_structured(
+            prompt=prompt,
+            schema={
+                "type": "object",
+                "properties": {
+                    "reasoning": {"type": "string"},
+                    "pass": {"type": "boolean"},
+                },
+                "required": ["reasoning", "pass"],
+            },
+            model=BATCH_MODEL,
+            thinking_level="low",
+        )
+        return {
+            "criterion": criterion_name,
+            "label": criterion["question"],
+            "pass": result.get("pass", False),
+            "reasoning": result.get("reasoning", ""),
+        }
+    except Exception as e:
+        logger.error("LLM judge failed for criterion %s: %s", criterion_name, e)
+        return {
+            "criterion": criterion_name,
+            "label": criterion["question"],
+            "pass": True,  # Don't penalize on judge errors
+            "reasoning": f"Judge error: {e}",
+            "error": True,
+        }
+
+
+async def llm_judge_listing(
+    listing: dict,
+    style_profile: dict,
+    product: dict,
+) -> dict:
+    """
+    Run all LLM judge criteria in parallel.
+
+    Returns {
+        criteria: [...],          # individual criterion results
+        passed_count: int,
+        total_count: int,
+        all_passed: bool,
+        failed_reasons: [str],    # human-readable failure summaries
+    }
+    """
+    tasks = [
+        _judge_single_criterion(name, criterion, listing, style_profile, product)
+        for name, criterion in JUDGE_CRITERIA.items()
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    passed_count = sum(1 for r in results if r["pass"])
+    total_count = len(results)
+    failed_reasons = [
+        f"{r['criterion']}: {r['reasoning'][:150]}"
+        for r in results
+        if not r["pass"]
+    ]
+
+    return {
+        "criteria": results,
+        "passed_count": passed_count,
+        "total_count": total_count,
+        "all_passed": passed_count == total_count,
+        "failed_reasons": failed_reasons,
+    }
+
+
+def combine_validation(
+    code_validation: dict,
+    judge_result: dict,
+) -> dict:
+    """
+    Combine code-based structural checks with LLM judge results
+    into a single validation result.
+
+    Scoring: start at 100, deduct 15 per code issue, deduct 12 per
+    failed LLM criterion. Passed = no code issues AND all LLM criteria pass.
+    """
+    code_issues = code_validation.get("issues", [])
+    judge_criteria = judge_result.get("criteria", [])
+
+    code_deductions = len(code_issues) * 15
+    judge_deductions = sum(12 for c in judge_criteria if not c["pass"])
+    score = max(0, 100 - code_deductions - judge_deductions)
+
+    all_code_passed = len(code_issues) == 0
+    all_judge_passed = judge_result.get("all_passed", True)
+
+    # Build combined issues list
+    issues = list(code_issues)
+    for c in judge_criteria:
+        if not c["pass"]:
+            issues.append(f"[{c['criterion']}] {c['reasoning'][:120]}")
+
+    return {
+        "passed": all_code_passed and all_judge_passed,
+        "score": score,
+        "issues": issues,
+        "code_issues": code_issues,
+        "judge_criteria": judge_criteria,
+        "judge_passed": judge_result.get("passed_count", 0),
+        "judge_total": judge_result.get("total_count", 0),
     }

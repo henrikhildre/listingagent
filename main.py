@@ -39,7 +39,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -539,6 +539,151 @@ async def test_recipe_endpoint(req: TestRecipeRequest):
         "recipe": current_recipe,
         "test_results": test_results,
     }
+
+
+# ---------------------------------------------------------------------------
+# 5b. POST /api/auto-refine (SSE)
+# ---------------------------------------------------------------------------
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    """Format a Server-Sent Event."""
+    return f"event: {event_type}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@app.post("/api/auto-refine")
+async def auto_refine(req: JobIdRequest):
+    """
+    Draft, test, and auto-refine the recipe in a loop.
+    Streams progress via Server-Sent Events.
+    """
+    job_path = _job_exists(req.job_id)
+
+    async def event_stream():
+        try:
+            style_profile = _load_json_artifact(job_path, "style_profile.json")
+            data_model = _load_json_artifact(job_path, "data_model.json")
+
+            if not style_profile or not data_model:
+                yield _sse_event("error", {"text": "Missing style profile or data model."})
+                return
+
+            # 1. Draft recipe if needed
+            current_recipe = _load_json_artifact(job_path, "recipe.json")
+            if not current_recipe:
+                yield _sse_event("progress", {"text": "Drafting listing template..."})
+                current_recipe = await recipe_module.draft_recipe(
+                    req.job_id, style_profile, data_model
+                )
+
+            # 2. Initial test
+            yield _sse_event("progress", {"text": "Testing on sample products..."})
+            test_results = await recipe_module.test_recipe(
+                req.job_id, current_recipe
+            )
+            current_recipe = _load_json_artifact(job_path, "recipe.json")
+
+            avg = _calc_avg_score(test_results)
+            all_passed = all(
+                tr.get("validation", {}).get("passed", False)
+                for tr in test_results
+            )
+            yield _sse_event("score", {
+                "attempt": 1,
+                "avg": avg,
+                "all_passed": all_passed,
+                "details": _summarize_results(test_results),
+            })
+
+            # 3. Auto-refine loop (up to 3 iterations)
+            iterations = 1
+            for i in range(3):
+                if avg >= 90 and all_passed:
+                    break
+
+                feedback = recipe_module.build_auto_feedback(test_results)
+                yield _sse_event("progress", {
+                    "text": f"Refining recipe — attempt {i + 2}..."
+                })
+
+                current_recipe = await recipe_module.refine_recipe(
+                    req.job_id, current_recipe, feedback, test_results
+                )
+
+                yield _sse_event("progress", {
+                    "text": f"Re-testing — attempt {i + 2}..."
+                })
+                test_results = await recipe_module.test_recipe(
+                    req.job_id, current_recipe
+                )
+                current_recipe = _load_json_artifact(job_path, "recipe.json")
+
+                avg = _calc_avg_score(test_results)
+                all_passed = all(
+                    tr.get("validation", {}).get("passed", False)
+                    for tr in test_results
+                )
+                iterations = i + 2
+
+                yield _sse_event("score", {
+                    "attempt": iterations,
+                    "avg": avg,
+                    "all_passed": all_passed,
+                    "details": _summarize_results(test_results),
+                })
+
+            # 4. Final result
+            reached = avg >= 90 and all_passed
+            remaining_issues = []
+            if not reached:
+                for tr in test_results:
+                    issues = tr.get("validation", {}).get("issues", [])
+                    if issues:
+                        name = tr.get("product_name") or tr.get("product_id")
+                        remaining_issues.append({"product": name, "issues": issues})
+
+            yield _sse_event("complete", {
+                "test_results": test_results,
+                "recipe": current_recipe,
+                "reached_threshold": reached,
+                "iterations": iterations,
+                "avg_score": avg,
+                "remaining_issues": remaining_issues,
+            })
+
+        except Exception as e:
+            logger.exception("auto-refine failed for job %s", req.job_id)
+            yield _sse_event("error", {"text": str(e)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _calc_avg_score(test_results: list[dict]) -> int:
+    """Calculate average validation score from test results."""
+    if not test_results:
+        return 0
+    total = sum(tr.get("validation", {}).get("score", 0) for tr in test_results)
+    return round(total / len(test_results))
+
+
+def _summarize_results(test_results: list[dict]) -> list[dict]:
+    """Create a brief summary of each test result."""
+    summary = []
+    for tr in test_results:
+        summary.append({
+            "product": tr.get("product_name") or tr.get("product_id", "?"),
+            "score": tr.get("validation", {}).get("score", 0),
+            "passed": tr.get("validation", {}).get("passed", False),
+            "issues": tr.get("validation", {}).get("issues", []),
+        })
+    return summary
 
 
 # ---------------------------------------------------------------------------

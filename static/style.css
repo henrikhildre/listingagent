@@ -643,6 +643,34 @@ button:not(:disabled):active {
 }
 
 /* ============================================
+   INLINE PROGRESS (replaces loading overlay in chat)
+   ============================================ */
+.inline-progress {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 1.5rem;
+    animation: fadeInUp var(--transition-medium);
+}
+
+.inline-progress-bubble {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    background-color: var(--color-surface);
+    color: var(--color-text-secondary);
+    border-radius: 1rem 1rem 1rem 0.25rem;
+    padding: 0.75rem 1rem;
+    max-width: 80%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--color-border);
+    font-size: 0.875rem;
+}
+
+.inline-progress-bubble .spinner-sm {
+    flex-shrink: 0;
+}
+
+/* ============================================
    RESPONSIVE ADJUSTMENTS
    ============================================ */
 @media (max-width: 768px) {
