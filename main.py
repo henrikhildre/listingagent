@@ -20,15 +20,25 @@ Job state is filesystem-based at /tmp/jobs/{job_id}/:
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -61,6 +71,66 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Auth — HMAC-based session cookie
+# ---------------------------------------------------------------------------
+
+APP_PASSWORD = os.getenv("APP_PASSWORD", "listingagent")
+_SESSION_SECRET = os.urandom(32)
+_SESSION_TOKEN = hmac.new(
+    _SESSION_SECRET, APP_PASSWORD.encode(), hashlib.sha256
+).hexdigest()
+
+_PUBLIC_PATHS = frozenset({"/", "/api/login", "/api/auth-check"})
+
+
+def _is_authenticated(request: Request) -> bool:
+    token = request.cookies.get("session_token")
+    return token is not None and hmac.compare_digest(token, _SESSION_TOKEN)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if (
+        path in _PUBLIC_PATHS
+        or path.startswith("/static")
+        or request.headers.get("upgrade", "").lower() == "websocket"
+    ):
+        return await call_next(request)
+
+    if not _is_authenticated(request):
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+    return await call_next(request)
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+async def login(req: LoginRequest):
+    if not hmac.compare_digest(req.password, APP_PASSWORD):
+        raise HTTPException(status_code=401, detail="Wrong password")
+    response = JSONResponse(content={"ok": True})
+    response.set_cookie(
+        key="session_token",
+        value=_SESSION_TOKEN,
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,  # 30 days
+    )
+    return response
+
+
+@app.get("/api/auth-check")
+async def auth_check(request: Request):
+    if _is_authenticated(request):
+        return {"authenticated": True}
+    return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -149,6 +219,7 @@ def _load_json_artifact(job_path: Path, filename: str) -> dict | None:
 # 1. POST /api/upload
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/upload")
 async def upload_files(files: list[UploadFile] = File(...)):
     """Accept file uploads, create job directory, save files. Return job_id + file list."""
@@ -187,6 +258,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
 # 2. POST /api/discover
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/discover")
 async def discover(req: JobIdRequest):
     """Categorize uploads and run LLM-driven data exploration (Phase 1)."""
@@ -209,6 +281,7 @@ async def discover(req: JobIdRequest):
 # ---------------------------------------------------------------------------
 # 3. POST /api/chat
 # ---------------------------------------------------------------------------
+
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
@@ -292,6 +365,7 @@ async def chat(req: ChatRequest):
 # 4. POST /api/build-data-model
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/build-data-model")
 async def build_data_model(req: BuildDataModelRequest):
     """Finalize the data model from the discovery conversation (Phase 1 -> 2 transition)."""
@@ -315,6 +389,7 @@ async def build_data_model(req: BuildDataModelRequest):
 # ---------------------------------------------------------------------------
 # 5. POST /api/test-recipe
 # ---------------------------------------------------------------------------
+
 
 @app.post("/api/test-recipe")
 async def test_recipe_endpoint(req: TestRecipeRequest):
@@ -371,6 +446,7 @@ async def test_recipe_endpoint(req: TestRecipeRequest):
 # 6. POST /api/approve-recipe
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/approve-recipe")
 async def approve_recipe_endpoint(req: JobIdRequest):
     """Lock the recipe for batch execution."""
@@ -397,6 +473,7 @@ async def approve_recipe_endpoint(req: JobIdRequest):
 # 7. POST /api/execute
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/execute")
 async def execute(req: JobIdRequest):
     """Start batch execution as a background task. Returns immediately."""
@@ -405,10 +482,14 @@ async def execute(req: JobIdRequest):
     # Check prerequisites
     current_recipe = _load_json_artifact(job_path, "recipe.json")
     if not current_recipe:
-        raise HTTPException(status_code=400, detail="No recipe found. Build and test one first.")
+        raise HTTPException(
+            status_code=400, detail="No recipe found. Build and test one first."
+        )
 
     if not current_recipe.get("approved"):
-        raise HTTPException(status_code=400, detail="Recipe must be approved before execution.")
+        raise HTTPException(
+            status_code=400, detail="Recipe must be approved before execution."
+        )
 
     # Prevent duplicate execution
     if req.job_id in active_tasks and not active_tasks[req.job_id].done():
@@ -418,9 +499,7 @@ async def execute(req: JobIdRequest):
     connections = ws_connections.setdefault(req.job_id, set())
 
     # Launch background task
-    task = asyncio.create_task(
-        _run_batch(req.job_id, connections)
-    )
+    task = asyncio.create_task(_run_batch(req.job_id, connections))
     active_tasks[req.job_id] = task
 
     logger.info("Batch execution started for job %s", req.job_id)
@@ -440,11 +519,13 @@ async def _run_batch(job_id: str, connections: set):
         logger.exception("Batch execution failed for job %s", job_id)
         # Notify connected clients of the failure
         try:
-            payload = json.dumps({
-                "type": "batch_error",
-                "job_id": job_id,
-                "error": str(e),
-            })
+            payload = json.dumps(
+                {
+                    "type": "batch_error",
+                    "job_id": job_id,
+                    "error": str(e),
+                }
+            )
             dead = set()
             for ws in connections:
                 try:
@@ -459,6 +540,7 @@ async def _run_batch(job_id: str, connections: set):
 # ---------------------------------------------------------------------------
 # 8. GET /api/status/{job_id}
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
@@ -494,6 +576,7 @@ async def get_status(job_id: str):
 # 9. GET /api/download/{job_id}
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/download/{job_id}")
 async def download(job_id: str):
     """Return the output.zip for a completed job."""
@@ -501,7 +584,10 @@ async def download(job_id: str):
 
     zip_path = job_path / "output.zip"
     if not zip_path.exists():
-        raise HTTPException(status_code=404, detail="Output ZIP not found. Batch execution may not be complete.")
+        raise HTTPException(
+            status_code=404,
+            detail="Output ZIP not found. Batch execution may not be complete.",
+        )
 
     return FileResponse(
         path=str(zip_path),
@@ -513,6 +599,7 @@ async def download(job_id: str):
 # ---------------------------------------------------------------------------
 # 10. WebSocket /ws/{job_id}
 # ---------------------------------------------------------------------------
+
 
 @app.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
@@ -535,7 +622,11 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         pass
     finally:
         connections.discard(websocket)
-        logger.info("WebSocket disconnected for job %s (remaining: %d)", job_id, len(connections))
+        logger.info(
+            "WebSocket disconnected for job %s (remaining: %d)",
+            job_id,
+            len(connections),
+        )
         # Clean up empty sets
         if not connections:
             ws_connections.pop(job_id, None)
@@ -557,4 +648,6 @@ async def root():
     index_path = static_dir / "index.html"
     if index_path.exists():
         return FileResponse(str(index_path))
-    return {"message": "ListingAgent API is running. Frontend not found at static/index.html."}
+    return {
+        "message": "ListingAgent API is running. Frontend not found at static/index.html."
+    }

@@ -51,6 +51,11 @@ async function api(endpoint, options = {}) {
     try {
         const response = await fetch(endpoint, config);
 
+        if (response.status === 401) {
+            showView('login-view');
+            throw new Error('Session expired. Please log in again.');
+        }
+
         if (!response.ok) {
             let errorMessage = `Request failed (${response.status})`;
             try {
@@ -206,7 +211,7 @@ function formatMessage(text) {
  * Switch the active view. Hides all views, shows the target.
  */
 function showView(viewName) {
-    const views = ['upload-view', 'chat-view', 'execution-view'];
+    const views = ['login-view', 'upload-view', 'chat-view', 'execution-view'];
 
     views.forEach(id => {
         const el = document.getElementById(id);
@@ -1498,10 +1503,66 @@ function downloadResults() {
 }
 
 // ============================================================================
+// Login
+// ============================================================================
+
+async function checkAuth() {
+    try {
+        const resp = await fetch('/api/auth-check');
+        return resp.ok;
+    } catch {
+        return false;
+    }
+}
+
+async function login() {
+    const input = document.getElementById('login-password');
+    const errorEl = document.getElementById('login-error');
+    if (!input) return;
+
+    function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.classList.remove('hidden');
+    }
+
+    const password = input.value;
+    if (!password) return showError('Please enter a password.');
+
+    try {
+        const resp = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+        });
+
+        if (!resp.ok) return showError('Wrong password.');
+
+        errorEl.classList.add('hidden');
+        showView('upload-view');
+    } catch {
+        showError('Connection error. Is the server running?');
+    }
+}
+
+// ============================================================================
 // Initialization
 // ============================================================================
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Check auth first
+    const authed = await checkAuth();
+    if (authed) {
+        showView('upload-view');
+    } else {
+        showView('login-view');
+    }
+
+    // Login handlers
+    document.getElementById('login-btn')?.addEventListener('click', login);
+    document.getElementById('login-password')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); login(); }
+    });
+
     // Initialize upload handlers
     initUpload();
 
@@ -1547,7 +1608,4 @@ document.addEventListener('DOMContentLoaded', () => {
             showView('chat-view');
         });
     }
-
-    // Show initial view
-    showView('upload-view');
 });

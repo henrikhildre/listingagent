@@ -36,9 +36,34 @@
     <div id="toast-container" class="fixed bottom-8 right-8 z-40 flex flex-col gap-3"></div>
 
     <!-- ============================================
+         VIEW 0: LOGIN
+         ============================================ -->
+    <div id="login-view" class="view hidden min-h-screen flex flex-col items-center justify-center px-6">
+        <div class="max-w-sm w-full">
+            <div class="text-center mb-8">
+                <div class="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold text-slate-900 mb-1">ListingAgent</h1>
+                <p class="text-sm text-slate-500">Enter the password to continue</p>
+            </div>
+            <div class="space-y-4">
+                <input id="login-password" type="password" placeholder="Password"
+                    class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition">
+                <p id="login-error" class="text-sm text-red-500 hidden"></p>
+                <button id="login-btn" class="btn-primary w-full py-3 px-6 rounded-xl font-semibold text-base">
+                    Enter
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================
          VIEW 1: UPLOAD
          ============================================ -->
-    <div id="upload-view" class="view min-h-screen flex flex-col">
+    <div id="upload-view" class="view hidden min-h-screen flex flex-col">
 
         <!-- Header -->
         <header class="border-b border-slate-200 bg-white">
