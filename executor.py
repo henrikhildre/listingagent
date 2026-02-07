@@ -34,6 +34,7 @@ from gemini_client import (
     generate_structured,
     generate_with_images,
     generate_with_text,
+    QuotaExhaustedError,
     BATCH_MODEL,
 )
 from recipe import (
@@ -347,9 +348,24 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
         product_id = product.get("id", f"product_{idx}")
 
         # Process
-        result = await _process_product(
-            job_id, product, recipe, style_profile, output_schema
-        )
+        try:
+            result = await _process_product(
+                job_id, product, recipe, style_profile, output_schema
+            )
+        except QuotaExhaustedError as e:
+            logger.error("Quota exhausted at product %d/%d: %s", idx + 1, total, e)
+            # Mark this and all remaining products as failed
+            for remaining_idx in range(idx, total):
+                rid = products[remaining_idx].get("id", f"product_{remaining_idx}")
+                rsku = products[remaining_idx].get("sku")
+                rimg = (products[remaining_idx].get("image_files") or [None])[0]
+                results.append(_failed_result(rid, rsku, rimg, "API quota exhausted"))
+            await _send_ws_message(
+                websocket_connections,
+                {"type": "error", "message": "Gemini API quota exhausted. Batch stopped early."},
+            )
+            break
+
         results.append(result)
 
         # Save individual listing JSON (even partial / failed ones)

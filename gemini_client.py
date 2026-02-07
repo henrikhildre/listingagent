@@ -6,11 +6,16 @@ convenience functions for different generation patterns (text-only,
 multimodal, code execution, search, structured output).
 """
 
+import asyncio
+import logging
 import os
+from functools import wraps
 from typing import Optional
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError, ClientError, ServerError
 
 load_dotenv()
 
@@ -33,6 +38,65 @@ def _ensure_client():
     return client
 
 
+logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+INITIAL_BACKOFF = 2  # seconds
+QUOTA_KEYWORDS = ("quota", "limit exceeded", "daily limit", "rate limit exceeded")
+
+
+class QuotaExhaustedError(Exception):
+    """Raised when the daily API quota is used up (not a transient rate limit)."""
+
+
+def _is_retryable(error: Exception) -> bool:
+    """Return True if the error is a transient failure worth retrying."""
+    if isinstance(error, ClientError) and error.code == 429:
+        msg = (str(error.message) or "").lower()
+        # Daily quota exhaustion is NOT retryable
+        if any(kw in msg for kw in QUOTA_KEYWORDS):
+            return False
+        return True
+    if isinstance(error, ServerError):
+        return True  # 500/503 are transient
+    return False
+
+
+def _is_quota_error(error: Exception) -> bool:
+    """Return True if this is a daily quota exhaustion (stop, don't retry)."""
+    if isinstance(error, ClientError) and error.code == 429:
+        msg = (str(error.message) or "").lower()
+        return any(kw in msg for kw in QUOTA_KEYWORDS)
+    return False
+
+
+def with_retry(fn):
+    """Decorator that adds exponential backoff retry for transient API errors."""
+    @wraps(fn)
+    async def wrapper(*args, **kwargs):
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                return await fn(*args, **kwargs)
+            except (ClientError, ServerError, APIError) as e:
+                last_error = e
+                if _is_quota_error(e):
+                    raise QuotaExhaustedError(
+                        f"Daily Gemini API quota exhausted: {e}"
+                    ) from e
+                if not _is_retryable(e) or attempt == MAX_RETRIES:
+                    raise
+                delay = INITIAL_BACKOFF * (2 ** attempt)
+                logger.warning(
+                    "Gemini API error (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1, MAX_RETRIES + 1, delay, e,
+                )
+                await asyncio.sleep(delay)
+        raise last_error  # should not reach here
+    return wrapper
+
+
 # Tool definitions
 # CRITICAL: code_execution and google_search CANNOT be used together
 CODE_EXECUTION_TOOL = types.Tool(code_execution=types.ToolCodeExecution())
@@ -46,6 +110,7 @@ def _valid_thinking_level(level: str) -> str:
     return level if level in valid else "high"
 
 
+@with_retry
 async def generate_with_text(
     prompt: str, *, model: Optional[str] = None, thinking_level: str = "high"
 ) -> str:
@@ -75,6 +140,7 @@ async def generate_with_text(
     return response.text or ""
 
 
+@with_retry
 async def generate_with_images(
     prompt: str,
     image_parts: list,
@@ -114,6 +180,7 @@ async def generate_with_images(
     return response.text or ""
 
 
+@with_retry
 async def generate_with_code_execution(
     prompt: str,
     image_parts: Optional[list] = None,
@@ -156,6 +223,7 @@ async def generate_with_code_execution(
     return response.text or ""
 
 
+@with_retry
 async def generate_with_search(
     prompt: str,
     image_parts: Optional[list] = None,
@@ -198,6 +266,7 @@ async def generate_with_search(
     return response.text or ""
 
 
+@with_retry
 async def generate_structured(
     prompt: str,
     image_parts: Optional[list] = None,
