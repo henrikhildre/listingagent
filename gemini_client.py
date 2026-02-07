@@ -36,27 +36,11 @@ CODE_EXECUTION_TOOL = types.Tool(code_execution=types.ToolCodeExecution())
 GOOGLE_SEARCH_TOOL = types.Tool(google_search=types.GoogleSearch())
 
 
-def thinking_level_to_budget(level: str) -> int:
-    """Convert thinking level to token budget."""
-    mapping = {
-        "high": 8192,
-        "medium": 4096,
-        "low": 1024,
-    }
-    return mapping.get(level.lower(), 4096)
-
-
-def extract_text_from_response(response) -> str:
-    """Extract text content from Gemini response."""
-    if not response.candidates:
-        return ""
-
-    text_parts = []
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "text") and part.text:
-            text_parts.append(part.text)
-
-    return "".join(text_parts)
+def _valid_thinking_level(level: str) -> str:
+    """Validate thinking level string for Gemini 3 models."""
+    valid = {"high", "medium", "low", "minimal"}
+    level = level.lower()
+    return level if level in valid else "high"
 
 
 async def generate_with_text(
@@ -80,7 +64,7 @@ async def generate_with_text(
 
     config = types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(
-            thinking_budget=thinking_level_to_budget(thinking_level)
+            thinking_level=_valid_thinking_level(thinking_level)
         )
     )
 
@@ -90,7 +74,7 @@ async def generate_with_text(
         config=config
     )
 
-    return extract_text_from_response(response)
+    return response.text or ""
 
 
 async def generate_with_images(
@@ -121,7 +105,7 @@ async def generate_with_images(
 
     config = types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(
-            thinking_budget=thinking_level_to_budget(thinking_level)
+            thinking_level=_valid_thinking_level(thinking_level)
         )
     )
 
@@ -131,7 +115,7 @@ async def generate_with_images(
         config=config
     )
 
-    return extract_text_from_response(response)
+    return response.text or ""
 
 
 async def generate_with_code_execution(
@@ -165,7 +149,7 @@ async def generate_with_code_execution(
     config = types.GenerateContentConfig(
         tools=[CODE_EXECUTION_TOOL],
         thinking_config=types.ThinkingConfig(
-            thinking_budget=thinking_level_to_budget(thinking_level)
+            thinking_level=_valid_thinking_level(thinking_level)
         )
     )
 
@@ -175,7 +159,7 @@ async def generate_with_code_execution(
         config=config
     )
 
-    return extract_text_from_response(response)
+    return response.text or ""
 
 
 async def generate_with_search(
@@ -209,7 +193,7 @@ async def generate_with_search(
     config = types.GenerateContentConfig(
         tools=[GOOGLE_SEARCH_TOOL],
         thinking_config=types.ThinkingConfig(
-            thinking_budget=thinking_level_to_budget(thinking_level)
+            thinking_level=_valid_thinking_level(thinking_level)
         )
     )
 
@@ -219,7 +203,7 @@ async def generate_with_search(
         config=config
     )
 
-    return extract_text_from_response(response)
+    return response.text or ""
 
 
 async def generate_structured(
@@ -255,7 +239,7 @@ async def generate_structured(
         response_mime_type="application/json",
         response_schema=schema,
         thinking_config=types.ThinkingConfig(
-            thinking_budget=thinking_level_to_budget(thinking_level)
+            thinking_level=_valid_thinking_level(thinking_level)
         )
     )
 
@@ -266,5 +250,4 @@ async def generate_structured(
     )
 
     import json
-    text = extract_text_from_response(response)
-    return json.loads(text) if text else {}
+    return json.loads(response.text) if response.text else {}
