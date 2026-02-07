@@ -171,13 +171,16 @@ async def explore_data(
         "2. Figure out how images map to spreadsheet rows (if a spreadsheet exists). "
         "Look for SKU patterns, name matches, or numbering conventions.\n"
         "3. Propose a data model: what fields each product has, how images are "
-        "linked, and any ambiguities.\n"
-        "4. Ask the user any clarifying questions if needed (e.g., unmatched "
-        "images, unclear columns).\n\n"
+        "linked, and any ambiguities.\n\n"
         "If there is NO spreadsheet, treat each image as a product and extract "
         "any info you can from the filenames (e.g., 'blue-wool-scarf-25cm.jpg' "
         "-> name='Blue Wool Scarf', size='25cm').\n\n"
-        "Be concise and conversational. Present your findings clearly."
+        "Be concise and conversational. Present your findings clearly.\n\n"
+        "IMPORTANT: End your response with a clear conclusion. Show a brief summary "
+        "of what you found (e.g., '15 products, 42 images matched, 3 unmatched') "
+        "and then say: \"Review the mapping above — if everything looks correct, "
+        "click **Confirm Data Mapping**. Otherwise, let me know what to adjust.\"\n"
+        "Do NOT ask open-ended questions like 'How would you like to proceed?'"
     )
 
     prompt = "\n".join(prompt_sections)

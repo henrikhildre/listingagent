@@ -205,27 +205,39 @@ function showView(viewName) {
  * Update the phase badge in the chat view header.
  */
 function updatePhaseIndicator(phase) {
-    const badge = document.getElementById('phase-badge');
-    if (!badge) return;
+    const container = document.getElementById('phase-indicator');
+    if (!container) return;
 
-    const labels = {
-        'DISCOVER': 'Discovery',
-        'INTERVIEW': 'Interview',
-        'RECIPE_TEST': 'Recipe Testing',
-        'EXECUTING': 'Executing',
-        'RESULTS': 'Complete',
+    const phaseOrder = ['discovery', 'interview', 'recipe'];
+    const phaseMap = {
+        'DISCOVER': 'discovery',
+        'INTERVIEW': 'interview',
+        'RECIPE_TEST': 'recipe',
+        'EXECUTING': 'recipe',
+        'RESULTS': 'recipe',
     };
 
-    const colors = {
-        'DISCOVER': 'badge-primary',
-        'INTERVIEW': 'badge-primary',
-        'RECIPE_TEST': 'badge-warning',
-        'EXECUTING': 'badge-primary',
-        'RESULTS': 'badge-success',
-    };
+    const activePhase = phaseMap[phase] || 'discovery';
+    const activeIndex = phaseOrder.indexOf(activePhase);
 
-    badge.textContent = labels[phase] || phase;
-    badge.className = `badge ${colors[phase] || 'badge-primary'}`;
+    phaseOrder.forEach((p, i) => {
+        const span = container.querySelector(`[data-phase="${p}"]`);
+        if (!span) return;
+
+        // Reset classes
+        span.className = 'px-3 py-1 rounded-full';
+
+        if (i < activeIndex) {
+            // Completed
+            span.classList.add('bg-green-100', 'text-green-600');
+        } else if (i === activeIndex) {
+            // Active
+            span.classList.add('bg-blue-100', 'text-blue-600');
+        } else {
+            // Upcoming
+            span.classList.add('bg-slate-100', 'text-slate-400');
+        }
+    });
 }
 
 // ============================================================================
@@ -384,6 +396,7 @@ async function startDiscovery() {
     state.phase = 'DISCOVER';
     showView('chat-view');
     updatePhaseIndicator('DISCOVER');
+    addPhaseBanner('DISCOVER');
     showLoading('Analyzing your data...');
 
     // Disable chat input during discovery
@@ -474,6 +487,52 @@ function addSystemMessage(content) {
 }
 
 /**
+ * Add a phase banner card to the chat explaining what this phase does.
+ */
+function addPhaseBanner(phase) {
+    const chatMessages = document.getElementById('chat-messages');
+    if (!chatMessages) return;
+
+    const banners = {
+        DISCOVER: {
+            step: '1',
+            title: 'Data Mapping',
+            description: 'The AI is analyzing your files to understand what products you have and how images connect to data.',
+        },
+        INTERVIEW: {
+            step: '2',
+            title: 'Brand Profile',
+            description: 'Answer a few questions about your selling style so listings match your brand voice.',
+        },
+        RECIPE_TEST: {
+            step: '3',
+            title: 'Listing Template',
+            description: 'The AI will draft a listing formula and test it on a few products. Review and refine until you\'re happy.',
+        },
+    };
+
+    const b = banners[phase];
+    if (!b) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex justify-center my-5';
+    wrapper.innerHTML = `
+        <div class="phase-banner">
+            <div class="flex items-center gap-3">
+                <span class="phase-banner-step">${b.step}</span>
+                <div>
+                    <div class="text-sm font-semibold text-slate-800">${b.title}</div>
+                    <div class="text-xs text-slate-500">${b.description}</div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
  * Enable or disable the chat input area.
  */
 function setChatInputEnabled(enabled) {
@@ -504,8 +563,8 @@ function showActionButton(id, label, onClick) {
 
     const btn = document.createElement('button');
     btn.id = id;
-    btn.className = 'btn-primary px-4 py-2 rounded-lg text-sm font-medium mr-2';
-    btn.textContent = label;
+    btn.className = 'action-btn btn-primary px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2';
+    btn.innerHTML = `${escapeHtml(label)} <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/></svg>`;
     btn.addEventListener('click', onClick);
 
     container.appendChild(btn);
@@ -764,6 +823,7 @@ async function buildDataModel() {
 async function startInterview() {
     state.phase = 'INTERVIEW';
     updatePhaseIndicator('INTERVIEW');
+    addPhaseBanner('INTERVIEW');
 
     showLoading('Starting style interview...');
     setChatInputEnabled(false);
@@ -806,6 +866,7 @@ async function startInterview() {
 async function startRecipeBuilding() {
     state.phase = 'RECIPE_TEST';
     updatePhaseIndicator('RECIPE_TEST');
+    addPhaseBanner('RECIPE_TEST');
 
     showLoading('Drafting your listing recipe...');
     setChatInputEnabled(false);
@@ -1255,7 +1316,7 @@ function startPolling() {
  * Update the context panel based on the current phase and available data.
  */
 function updateContextPanel(categories) {
-    const panel = document.getElementById('context-panel-content');
+    const panel = document.getElementById('context-content');
     if (!panel) return;
 
     let html = '';

@@ -42,7 +42,12 @@ RULES:
   the conversation.
 
 WHEN YOU HAVE ENOUGH INFORMATION:
-End your message with a JSON block wrapped in ```json ... ``` fences. The JSON \
+First, give a brief 2-3 sentence summary of the brand profile you've built \
+(e.g., "Got it! Your brand is warm and playful, targeting young women on Etsy, \
+with bullet-point descriptions and free-shipping callouts."). Do NOT ask any \
+trailing questions after the summary — the profile is complete.
+
+Then end your message with a JSON block wrapped in ```json ... ``` fences. The JSON \
 must match this exact schema:
 
 ```json
