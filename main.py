@@ -46,7 +46,12 @@ import calibration
 import discovery
 import executor
 import recipe as recipe_module
-from file_utils import create_job_directory, get_job_path
+from file_utils import (
+    MAX_PASTE_LENGTH,
+    create_job_directory,
+    get_job_path,
+    save_pasted_text,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -220,6 +225,10 @@ class BuildDataModelRequest(BaseModel):
     conversation_history: list[dict] = []
 
 
+class PasteTextRequest(BaseModel):
+    text: str = Field(max_length=MAX_PASTE_LENGTH)
+
+
 class TestRecipeRequest(BaseModel):
     job_id: str
     sample_product_ids: list[str] | None = None
@@ -353,6 +362,39 @@ async def load_demo():
         "job_id": job_id,
         "files": saved_files,
         "file_count": len(saved_files),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 1c. POST /api/paste
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/paste")
+async def paste_text(req: PasteTextRequest):
+    """Accept pasted text input, create job directory, save text. Return job_id."""
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="No text provided.")
+
+    if len(text) > MAX_PASTE_LENGTH:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Text exceeds {MAX_PASTE_LENGTH:,} character limit.",
+        )
+
+    job_id = str(uuid4())
+    job_path = create_job_directory(job_id)
+
+    save_pasted_text(job_id, text)
+
+    logger.info(
+        "Saved pasted text for job %s (%d characters)", job_id, len(text),
+    )
+
+    return {
+        "job_id": job_id,
+        "text_length": len(text),
     }
 
 
