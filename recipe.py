@@ -52,7 +52,7 @@ DEFAULT_OUTPUT_SCHEMA = {
 # Default validation code
 # ---------------------------------------------------------------------------
 
-DEFAULT_VALIDATION_CODE = '''
+DEFAULT_VALIDATION_CODE = """
 def validate_listing(listing, style_profile):
     issues = []
 
@@ -92,12 +92,13 @@ def validate_listing(listing, style_profile):
         "score": score,
         "issues": issues,
     }
-'''
+"""
 
 
 # ---------------------------------------------------------------------------
 # Helper: load / save JSON artifacts
 # ---------------------------------------------------------------------------
+
 
 def _load_json(path: Path) -> dict:
     with open(path, "r", encoding="utf-8") as f:
@@ -128,6 +129,7 @@ def save_recipe(job_id: str, recipe: dict):
 # ---------------------------------------------------------------------------
 # 1. draft_recipe
 # ---------------------------------------------------------------------------
+
 
 async def draft_recipe(
     job_id: str,
@@ -234,7 +236,9 @@ Respond with EXACTLY this JSON structure (no markdown fencing):
 
     recipe = {
         "version": 1,
-        "prompt_template": recipe_data.get("prompt_template", _default_prompt_template(style_profile)),
+        "prompt_template": recipe_data.get(
+            "prompt_template", _default_prompt_template(style_profile)
+        ),
         "output_schema": recipe_data.get("output_schema", DEFAULT_OUTPUT_SCHEMA),
         "validation_code": recipe_data.get("validation_code", DEFAULT_VALIDATION_CODE),
         "test_results": [],
@@ -255,7 +259,7 @@ def _parse_recipe_response(text: str) -> dict:
     if cleaned.startswith("```"):
         # Remove opening fence (```json or ```)
         first_newline = cleaned.index("\n")
-        cleaned = cleaned[first_newline + 1:]
+        cleaned = cleaned[first_newline + 1 :]
     if cleaned.endswith("```"):
         cleaned = cleaned[:-3]
     cleaned = cleaned.strip()
@@ -317,6 +321,7 @@ Respond in the exact JSON schema provided."""
 # 2. test_recipe
 # ---------------------------------------------------------------------------
 
+
 async def test_recipe(
     job_id: str,
     recipe: dict,
@@ -350,9 +355,7 @@ async def test_recipe(
 
     for product in samples:
         try:
-            result = await _test_single_product(
-                job_id, recipe, product, style_profile
-            )
+            result = await _test_single_product(job_id, recipe, product, style_profile)
             test_results.append(result)
         except Exception as e:
             logger.error(
@@ -360,18 +363,20 @@ async def test_recipe(
                 product.get("id", "unknown"),
                 str(e),
             )
-            test_results.append({
-                "product_id": product.get("id", "unknown"),
-                "product_name": product.get("name", "Unknown"),
-                "listing": None,
-                "validation": {
-                    "passed": False,
-                    "score": 0,
-                    "issues": [f"Error during testing: {str(e)}"],
-                },
-                "image_filename": (product.get("image_files") or [None])[0],
-                "error": str(e),
-            })
+            test_results.append(
+                {
+                    "product_id": product.get("id", "unknown"),
+                    "product_name": product.get("name", "Unknown"),
+                    "listing": None,
+                    "validation": {
+                        "passed": False,
+                        "score": 0,
+                        "issues": [f"Error during testing: {str(e)}"],
+                    },
+                    "image_filename": (product.get("image_files") or [None])[0],
+                    "error": str(e),
+                }
+            )
 
     # Store test results in the recipe
     recipe["test_results"] = test_results
@@ -415,7 +420,9 @@ async def _test_single_product(
     )
 
     # 4. Run code-based validation locally
-    code_validation = run_validation(listing, style_profile, recipe.get("validation_code", ""))
+    code_validation = run_validation(
+        listing, style_profile, recipe.get("validation_code", "")
+    )
 
     # 5. Run LLM judge criteria in parallel
     judge_result = await llm_judge_listing(listing, style_profile, product)
@@ -458,15 +465,23 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         style_summary_parts.append(f"Seller type: {style_profile['seller_type']}")
     if style_profile.get("target_buyer"):
         style_summary_parts.append(f"Target buyer: {style_profile['target_buyer']}")
-    style_summary = ". ".join(style_summary_parts) if style_summary_parts else "No style profile provided"
+    style_summary = (
+        ". ".join(style_summary_parts)
+        if style_summary_parts
+        else "No style profile provided"
+    )
 
     # Build metadata string
     metadata = product.get("metadata", {})
-    metadata_str = ", ".join(f"{k}: {v}" for k, v in metadata.items()) if metadata else "None"
+    metadata_str = (
+        ", ".join(f"{k}: {v}" for k, v in metadata.items()) if metadata else "None"
+    )
 
     # Build always-mention list
     always_mention = style_profile.get("always_mention", [])
-    always_mention_str = "\n".join(f"- {item}" for item in always_mention) if always_mention else "None"
+    always_mention_str = (
+        "\n".join(f"- {item}" for item in always_mention) if always_mention else "None"
+    )
 
     # Replacement mapping
     replacements = {
@@ -482,7 +497,9 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         "{pricing_strategy}": style_profile.get("pricing_strategy", "N/A"),
         "{platform}": style_profile.get("platform", "marketplace"),
         "{always_mention_list}": always_mention_str,
-        "{avg_description_length}": style_profile.get("avg_description_length", "100-200 words"),
+        "{avg_description_length}": style_profile.get(
+            "avg_description_length", "100-200 words"
+        ),
         "{tags_style}": style_profile.get("tags_style", "mix of broad and specific"),
     }
 
@@ -496,6 +513,7 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
 # ---------------------------------------------------------------------------
 # 3. refine_recipe
 # ---------------------------------------------------------------------------
+
 
 async def refine_recipe(
     job_id: str,
@@ -585,9 +603,15 @@ Respond with EXACTLY this JSON structure (no markdown fencing):
     # Build updated recipe, preserving fields the LLM did not return
     updated_recipe = {
         "version": recipe["version"] + 1,
-        "prompt_template": updated_data.get("prompt_template", recipe["prompt_template"]),
-        "output_schema": updated_data.get("output_schema", recipe.get("output_schema", DEFAULT_OUTPUT_SCHEMA)),
-        "validation_code": updated_data.get("validation_code", recipe.get("validation_code", DEFAULT_VALIDATION_CODE)),
+        "prompt_template": updated_data.get(
+            "prompt_template", recipe["prompt_template"]
+        ),
+        "output_schema": updated_data.get(
+            "output_schema", recipe.get("output_schema", DEFAULT_OUTPUT_SCHEMA)
+        ),
+        "validation_code": updated_data.get(
+            "validation_code", recipe.get("validation_code", DEFAULT_VALIDATION_CODE)
+        ),
         "test_results": recipe.get("test_results", []),
         "approved": False,
         "changes_made": updated_data.get("changes_made", ""),
@@ -607,6 +631,7 @@ Respond with EXACTLY this JSON structure (no markdown fencing):
 # ---------------------------------------------------------------------------
 # 3b. build_auto_feedback
 # ---------------------------------------------------------------------------
+
 
 def build_auto_feedback(test_results: list[dict]) -> str:
     """
@@ -634,11 +659,17 @@ def build_auto_feedback(test_results: list[dict]) -> str:
             if not code_issues:
                 lines.append(f"**{name}** ({score}/100) — Quality issues:")
             else:
-                lines.append(f"  Quality issues:")
+                lines.append("  Quality issues:")
             for c in failed_criteria:
-                lines.append(f"  - [{c['criterion']}] {c.get('reasoning', 'Failed')[:200]}")
+                lines.append(
+                    f"  - [{c['criterion']}] {c.get('reasoning', 'Failed')[:200]}"
+                )
 
-        if not code_issues and not failed_criteria and not validation.get("passed", True):
+        if (
+            not code_issues
+            and not failed_criteria
+            and not validation.get("passed", True)
+        ):
             lines.append(f"- {name} ({score}/100): Failed validation")
 
         if code_issues or failed_criteria:
@@ -654,6 +685,7 @@ def build_auto_feedback(test_results: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 # 4. approve_recipe
 # ---------------------------------------------------------------------------
+
 
 async def approve_recipe(job_id: str, recipe: dict) -> dict:
     """
@@ -673,6 +705,7 @@ async def approve_recipe(job_id: str, recipe: dict) -> dict:
 # ---------------------------------------------------------------------------
 # 5. select_diverse_samples
 # ---------------------------------------------------------------------------
+
 
 def select_diverse_samples(products: list[dict], count: int = 3) -> list[dict]:
     """
@@ -695,7 +728,10 @@ def select_diverse_samples(products: list[dict], count: int = 3) -> list[dict]:
     # 1. Pick the product with the most metadata (richest data)
     richest = max(
         remaining,
-        key=lambda p: len(p.get("metadata", {})) + (1 if p.get("name") else 0) + (1 if p.get("category") else 0) + (1 if p.get("price") else 0),
+        key=lambda p: len(p.get("metadata", {}))
+        + (1 if p.get("name") else 0)
+        + (1 if p.get("category") else 0)
+        + (1 if p.get("price") else 0),
     )
     selected.append(richest)
     remaining.remove(richest)
@@ -706,7 +742,10 @@ def select_diverse_samples(products: list[dict], count: int = 3) -> list[dict]:
     # 2. Pick the product with the least metadata (sparsest data)
     sparsest = min(
         remaining,
-        key=lambda p: len(p.get("metadata", {})) + (1 if p.get("name") else 0) + (1 if p.get("category") else 0) + (1 if p.get("price") else 0),
+        key=lambda p: len(p.get("metadata", {}))
+        + (1 if p.get("name") else 0)
+        + (1 if p.get("category") else 0)
+        + (1 if p.get("price") else 0),
     )
     selected.append(sparsest)
     remaining.remove(sparsest)
@@ -717,7 +756,8 @@ def select_diverse_samples(products: list[dict], count: int = 3) -> list[dict]:
     # 3. Try to pick from a different category
     selected_categories = {p.get("category") for p in selected}
     different_category = [
-        p for p in remaining
+        p
+        for p in remaining
         if p.get("category") and p.get("category") not in selected_categories
     ]
 
@@ -742,6 +782,7 @@ def select_diverse_samples(products: list[dict], count: int = 3) -> list[dict]:
 # ---------------------------------------------------------------------------
 # 6. run_validation
 # ---------------------------------------------------------------------------
+
 
 def _check_code_safety(code: str) -> str | None:
     """Parse code with AST and reject dangerous patterns. Returns error string or None."""
@@ -999,75 +1040,60 @@ Respond with EXACTLY this JSON (no markdown fencing):
         }
 
 
-async def llm_judge_listing(
-    listing: dict,
-    style_profile: dict,
-    product: dict,
-) -> dict:
+async def llm_judge_listing(listing: dict, style_profile: dict, product: dict) -> dict:
     """
     Run all LLM judge criteria in parallel.
 
-    Returns {
-        criteria: [...],          # individual criterion results
-        passed_count: int,
-        total_count: int,
-        all_passed: bool,
-        failed_reasons: [str],    # human-readable failure summaries
-    }
+    Returns criteria results, counts, and failed reasons.
     """
-    tasks = [
-        _judge_single_criterion(name, criterion, listing, style_profile, product)
-        for name, criterion in JUDGE_CRITERIA.items()
-    ]
-
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(
+        *[
+            _judge_single_criterion(name, criterion, listing, style_profile, product)
+            for name, criterion in JUDGE_CRITERIA.items()
+        ]
+    )
 
     passed_count = sum(1 for r in results if r["pass"])
-    total_count = len(results)
-    failed_reasons = [
-        f"{r['criterion']}: {r['reasoning'][:150]}"
-        for r in results
-        if not r["pass"]
-    ]
 
     return {
         "criteria": results,
         "passed_count": passed_count,
-        "total_count": total_count,
-        "all_passed": passed_count == total_count,
-        "failed_reasons": failed_reasons,
+        "total_count": len(results),
+        "all_passed": passed_count == len(results),
+        "failed_reasons": [
+            f"{r['criterion']}: {r['reasoning'][:150]}"
+            for r in results
+            if not r["pass"]
+        ],
     }
 
 
-def combine_validation(
-    code_validation: dict,
-    judge_result: dict,
-) -> dict:
+def combine_validation(code_validation: dict, judge_result: dict) -> dict:
     """
-    Combine code-based structural checks with LLM judge results
-    into a single validation result.
+    Combine code-based structural checks with LLM judge results.
 
-    Scoring: start at 100, deduct 15 per code issue, deduct 12 per
-    failed LLM criterion. Passed = no code issues AND all LLM criteria pass.
+    Scoring: 100 - (15 * code issues) - (12 * failed judge criteria).
+    Passed = no code issues AND all LLM criteria pass.
     """
     code_issues = code_validation.get("issues", [])
     judge_criteria = judge_result.get("criteria", [])
 
-    code_deductions = len(code_issues) * 15
-    judge_deductions = sum(12 for c in judge_criteria if not c["pass"])
-    score = max(0, 100 - code_deductions - judge_deductions)
+    score = max(
+        0,
+        100 - len(code_issues) * 15 - sum(12 for c in judge_criteria if not c["pass"]),
+    )
 
-    all_code_passed = len(code_issues) == 0
-    all_judge_passed = judge_result.get("all_passed", True)
-
-    # Build combined issues list
-    issues = list(code_issues)
-    for c in judge_criteria:
-        if not c["pass"]:
-            issues.append(f"[{c['criterion']}] {c['reasoning'][:120]}")
+    issues = [
+        *code_issues,
+        *(
+            f"[{c['criterion']}] {c['reasoning'][:120]}"
+            for c in judge_criteria
+            if not c["pass"]
+        ),
+    ]
 
     return {
-        "passed": all_code_passed and all_judge_passed,
+        "passed": not code_issues and judge_result.get("all_passed", True),
         "score": score,
         "issues": issues,
         "code_issues": code_issues,

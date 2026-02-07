@@ -16,7 +16,6 @@ Key outputs:
 import json
 import logging
 import re
-from pathlib import Path
 
 from file_utils import (
     categorize_files,
@@ -80,9 +79,7 @@ async def categorize_uploads(job_id: str) -> dict:
             if "total_rows" in preview:
                 row_info = f" ({preview['total_rows']} rows)"
                 break
-        parts.append(
-            f"{n_sheets} spreadsheet{'s' if n_sheets != 1 else ''}{row_info}"
-        )
+        parts.append(f"{n_sheets} spreadsheet{'s' if n_sheets != 1 else ''}{row_info}")
     if n_docs:
         parts.append(f"{n_docs} document{'s' if n_docs != 1 else ''}")
     if n_other:
@@ -135,9 +132,7 @@ async def explore_data(
             continue
 
         headers_str = " | ".join(preview["headers"])
-        rows_str = "\n".join(
-            " | ".join(row) for row in preview["rows"]
-        )
+        rows_str = "\n".join(" | ".join(row) for row in preview["rows"])
         prompt_sections.append(
             f"## Spreadsheet: {filename}\n"
             f"Total rows: {preview['total_rows']}\n"
@@ -150,9 +145,7 @@ async def explore_data(
     if images:
         # Show all filenames so the LLM can detect naming patterns
         image_list = "\n".join(f"  - {name}" for name in sorted(images))
-        prompt_sections.append(
-            f"## Image Files ({len(images)} total)\n{image_list}\n"
-        )
+        prompt_sections.append(f"## Image Files ({len(images)} total)\n{image_list}\n")
 
     # Prior conversation context
     if conversation_history:
@@ -160,9 +153,7 @@ async def explore_data(
             f"{'User' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')}"
             for m in conversation_history
         )
-        prompt_sections.append(
-            f"## Previous Conversation\n{history_text}\n"
-        )
+        prompt_sections.append(f"## Previous Conversation\n{history_text}\n")
 
     prompt_sections.append(
         "## Your Task\n"
@@ -178,8 +169,8 @@ async def explore_data(
         "Be concise and conversational. Present your findings clearly.\n\n"
         "IMPORTANT: End your response with a clear conclusion. Show a brief summary "
         "of what you found (e.g., '15 products, 42 images matched, 3 unmatched') "
-        "and then say: \"Review the mapping above — if everything looks correct, "
-        "click **Confirm Data Mapping**. Otherwise, let me know what to adjust.\"\n"
+        'and then say: "Review the mapping above — if everything looks correct, '
+        'click **Confirm Data Mapping**. Otherwise, let me know what to adjust."\n'
         "Do NOT ask open-ended questions like 'How would you like to proceed?'"
     )
 
@@ -207,9 +198,7 @@ async def explore_data(
     return response_text
 
 
-async def build_data_model(
-    job_id: str, conversation_history: list[dict]
-) -> dict:
+async def build_data_model(job_id: str, conversation_history: list[dict]) -> dict:
     """Generate the structured data_model.json from the discovery conversation.
 
     Takes the full conversation history (user confirmations, corrections, and
@@ -224,7 +213,6 @@ async def build_data_model(
         The parsed data model dictionary (also saved as data_model.json).
     """
     job_path = get_job_path(job_id)
-    uploads_dir = job_path / "uploads"
 
     # Re-read file summary for grounding
     file_summary = await categorize_uploads(job_id)
@@ -254,7 +242,7 @@ async def build_data_model(
 Based on the following discovery conversation, generate the final data model JSON.
 
 ## File Summary
-{file_summary['summary']}
+{file_summary["summary"]}
 
 {sheet_info}
 ## Image Files ({len(all_images)} total)
@@ -320,7 +308,11 @@ Return ONLY the JSON object, wrapped in ```json ... ``` fences. No other text.""
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data_model, f, indent=2, ensure_ascii=False)
 
-    logger.info("Saved data_model.json for job %s (%d products)", job_id, len(data_model.get("products", [])))
+    logger.info(
+        "Saved data_model.json for job %s (%d products)",
+        job_id,
+        len(data_model.get("products", [])),
+    )
 
     return data_model
 
@@ -384,6 +376,5 @@ def _parse_json_from_response(text: str) -> dict:
                         break
 
     raise ValueError(
-        f"Could not extract valid JSON from response. "
-        f"First 200 chars: {text[:200]}"
+        f"Could not extract valid JSON from response. First 200 chars: {text[:200]}"
     )

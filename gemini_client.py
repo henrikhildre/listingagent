@@ -19,7 +19,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 BATCH_MODEL = os.getenv("BATCH_MODEL", "gemini-3-flash-preview")
 _use_pro = os.getenv("USE_PRO", "true").lower() in ("true", "1", "yes")
-REASONING_MODEL = os.getenv("REASONING_MODEL", "gemini-3-pro-preview" if _use_pro else BATCH_MODEL)
+REASONING_MODEL = os.getenv(
+    "REASONING_MODEL", "gemini-3-pro-preview" if _use_pro else BATCH_MODEL
+)
 
 # Initialize client (lazy — will fail on first API call if key is missing)
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
@@ -29,6 +31,7 @@ def _ensure_client():
     if client is None:
         raise ValueError("GEMINI_API_KEY environment variable is required")
     return client
+
 
 # Tool definitions
 # CRITICAL: code_execution and google_search CANNOT be used together
@@ -44,10 +47,7 @@ def _valid_thinking_level(level: str) -> str:
 
 
 async def generate_with_text(
-    prompt: str,
-    *,
-    model: Optional[str] = None,
-    thinking_level: str = "high"
+    prompt: str, *, model: Optional[str] = None, thinking_level: str = "high"
 ) -> str:
     """
     Simple text-only generation.
@@ -69,9 +69,7 @@ async def generate_with_text(
     )
 
     response = await _ensure_client().aio.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config=config
+        model=model_name, contents=prompt, config=config
     )
 
     return response.text or ""
@@ -82,7 +80,7 @@ async def generate_with_images(
     image_parts: list,
     *,
     model: Optional[str] = None,
-    thinking_level: str = "high"
+    thinking_level: str = "high",
 ) -> str:
     """
     Multimodal generation with images.
@@ -110,9 +108,7 @@ async def generate_with_images(
     )
 
     response = await _ensure_client().aio.models.generate_content(
-        model=model_name,
-        contents=parts,
-        config=config
+        model=model_name, contents=parts, config=config
     )
 
     return response.text or ""
@@ -123,7 +119,7 @@ async def generate_with_code_execution(
     image_parts: Optional[list] = None,
     *,
     model: Optional[str] = None,
-    thinking_level: str = "high"
+    thinking_level: str = "high",
 ) -> str:
     """
     Generation with code_execution tool enabled.
@@ -150,13 +146,11 @@ async def generate_with_code_execution(
         tools=[CODE_EXECUTION_TOOL],
         thinking_config=types.ThinkingConfig(
             thinking_level=_valid_thinking_level(thinking_level)
-        )
+        ),
     )
 
     response = await _ensure_client().aio.models.generate_content(
-        model=model_name,
-        contents=parts,
-        config=config
+        model=model_name, contents=parts, config=config
     )
 
     return response.text or ""
@@ -167,7 +161,7 @@ async def generate_with_search(
     image_parts: Optional[list] = None,
     *,
     model: Optional[str] = None,
-    thinking_level: str = "low"
+    thinking_level: str = "low",
 ) -> str:
     """
     Generation with google_search tool enabled.
@@ -194,13 +188,11 @@ async def generate_with_search(
         tools=[GOOGLE_SEARCH_TOOL],
         thinking_config=types.ThinkingConfig(
             thinking_level=_valid_thinking_level(thinking_level)
-        )
+        ),
     )
 
     response = await _ensure_client().aio.models.generate_content(
-        model=model_name,
-        contents=parts,
-        config=config
+        model=model_name, contents=parts, config=config
     )
 
     return response.text or ""
@@ -212,7 +204,7 @@ async def generate_structured(
     schema: Optional[dict] = None,
     *,
     model: Optional[str] = None,
-    thinking_level: str = "low"
+    thinking_level: str = "low",
 ) -> dict:
     """
     Generation with structured JSON output.
@@ -240,14 +232,13 @@ async def generate_structured(
         response_schema=schema,
         thinking_config=types.ThinkingConfig(
             thinking_level=_valid_thinking_level(thinking_level)
-        )
+        ),
     )
 
     response = await _ensure_client().aio.models.generate_content(
-        model=model_name,
-        contents=parts,
-        config=config
+        model=model_name, contents=parts, config=config
     )
 
     import json
+
     return json.loads(response.text) if response.text else {}

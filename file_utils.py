@@ -7,7 +7,6 @@ image processing, and output packaging.
 from pathlib import Path
 import shutil
 import zipfile
-import mimetypes
 from typing import Tuple
 from PIL import Image
 import openpyxl
@@ -54,12 +53,7 @@ def categorize_files(job_id: str) -> dict:
     """
     uploads_dir = get_job_path(job_id) / "uploads"
 
-    categories = {
-        "images": [],
-        "spreadsheets": [],
-        "documents": [],
-        "other": []
-    }
+    categories = {"images": [], "spreadsheets": [], "documents": [], "other": []}
 
     if not uploads_dir.exists():
         return categories
@@ -101,16 +95,12 @@ def read_spreadsheet_preview(filepath: Path, max_rows: int = 5) -> dict:
         headers = [str(cell) if cell is not None else "" for cell in rows_list[0]]
         data_rows = []
 
-        for row in rows_list[1:max_rows + 1]:
+        for row in rows_list[1 : max_rows + 1]:
             data_rows.append([str(cell) if cell is not None else "" for cell in row])
 
         workbook.close()
 
-        return {
-            "headers": headers,
-            "rows": data_rows,
-            "total_rows": len(rows_list) - 1
-        }
+        return {"headers": headers, "rows": data_rows, "total_rows": len(rows_list) - 1}
 
     elif ext in {".csv", ".tsv"}:
         separator = "\t" if ext == ".tsv" else ","
@@ -119,13 +109,9 @@ def read_spreadsheet_preview(filepath: Path, max_rows: int = 5) -> dict:
         headers = df.columns.tolist()
         rows = df.astype(str).values.tolist()
 
-        total_rows = sum(1 for _ in open(filepath, 'r', encoding='utf-8')) - 1
+        total_rows = sum(1 for _ in open(filepath, "r", encoding="utf-8")) - 1
 
-        return {
-            "headers": headers,
-            "rows": rows,
-            "total_rows": total_rows
-        }
+        return {"headers": headers, "rows": rows, "total_rows": total_rows}
 
     elif ext == ".xls":
         df = pd.read_excel(filepath, nrows=max_rows)
@@ -135,11 +121,7 @@ def read_spreadsheet_preview(filepath: Path, max_rows: int = 5) -> dict:
         df_full = pd.read_excel(filepath)
         total_rows = len(df_full)
 
-        return {
-            "headers": headers,
-            "rows": rows,
-            "total_rows": total_rows
-        }
+        return {"headers": headers, "rows": rows, "total_rows": total_rows}
 
     raise ValueError(f"Unsupported spreadsheet format: {ext}")
 
@@ -153,10 +135,7 @@ def load_image_as_bytes(filepath: Path) -> Tuple[bytes, str]:
     max_dimension = max(img.size)
     if max_dimension > 1024:
         scale_factor = 1024 / max_dimension
-        new_size = (
-            int(img.size[0] * scale_factor),
-            int(img.size[1] * scale_factor)
-        )
+        new_size = (int(img.size[0] * scale_factor), int(img.size[1] * scale_factor))
         img = img.resize(new_size, Image.Resampling.LANCZOS)
 
     output_buffer = io.BytesIO()
@@ -197,8 +176,8 @@ def create_output_zip(job_id: str) -> Path:
     if zip_path.exists():
         zip_path.unlink()
 
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for file_path in output_dir.rglob('*'):
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for file_path in output_dir.rglob("*"):
             if file_path.is_file():
                 arcname = file_path.relative_to(output_dir)
                 zipf.write(file_path, arcname)

@@ -11,7 +11,6 @@ Produces style_profile.json and conversation.json in the job directory.
 
 import json
 import re
-from pathlib import Path
 
 from file_utils import get_job_path
 from gemini_client import generate_with_text
@@ -88,9 +87,7 @@ def _build_data_context(data_model: dict) -> str:
         lines.append(f"- Available fields per product: {', '.join(fields)}")
 
         # Check if prices exist
-        has_prices = any(
-            p.get("price") is not None for p in products
-        )
+        has_prices = any(p.get("price") is not None for p in products)
         if has_prices:
             prices = [p["price"] for p in products if p.get("price") is not None]
             lines.append(
@@ -233,16 +230,19 @@ async def start_interview(job_id: str, data_model: dict) -> str:
     await _save_artifact(job_id, "conversation.json", conversation)
 
     # Persist the data_context for future turns
-    await _save_artifact(job_id, "_interview_context.json", {
-        "data_context": data_context,
-        "data_model_summary": {
-            "product_count": len(data_model.get("products", [])),
-            "has_prices": any(
-                p.get("price") is not None
-                for p in data_model.get("products", [])
-            ),
+    await _save_artifact(
+        job_id,
+        "_interview_context.json",
+        {
+            "data_context": data_context,
+            "data_model_summary": {
+                "product_count": len(data_model.get("products", [])),
+                "has_prices": any(
+                    p.get("price") is not None for p in data_model.get("products", [])
+                ),
+            },
         },
-    })
+    )
 
     return response_text
 

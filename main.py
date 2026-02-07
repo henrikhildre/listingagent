@@ -20,7 +20,6 @@ Job state is filesystem-based at /tmp/jobs/{job_id}/:
 """
 
 import asyncio
-import hashlib
 import hmac
 import json
 import logging
@@ -84,7 +83,9 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=63072000; includeSubDomains"
+    )
     if "server" in response.headers:
         del response.headers["server"]
     return response
@@ -159,7 +160,9 @@ async def login(req: LoginRequest, request: Request):
     ip = request.client.host if request.client else "unknown"
 
     if not _check_rate_limit(ip):
-        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+        raise HTTPException(
+            status_code=429, detail="Too many attempts. Try again later."
+        )
 
     if not hmac.compare_digest(req.password, APP_PASSWORD):
         _record_failed_attempt(ip)
@@ -361,7 +364,7 @@ async def load_demo():
 @app.post("/api/discover")
 async def discover(req: JobIdRequest):
     """Categorize uploads and run LLM-driven data exploration (Phase 1)."""
-    job_path = _job_exists(req.job_id)
+    _job_exists(req.job_id)
 
     try:
         file_summary = await discovery.categorize_uploads(req.job_id)
@@ -468,7 +471,7 @@ async def chat(req: ChatRequest):
 @app.post("/api/build-data-model")
 async def build_data_model(req: BuildDataModelRequest):
     """Finalize the data model from the discovery conversation (Phase 1 -> 2 transition)."""
-    job_path = _job_exists(req.job_id)
+    _job_exists(req.job_id)
 
     try:
         data_model = await discovery.build_data_model(
@@ -565,7 +568,9 @@ async def auto_refine(req: JobIdRequest):
             data_model = _load_json_artifact(job_path, "data_model.json")
 
             if not style_profile or not data_model:
-                yield _sse_event("error", {"text": "Missing style profile or data model."})
+                yield _sse_event(
+                    "error", {"text": "Missing style profile or data model."}
+                )
                 return
 
             # 1. Draft recipe if needed
@@ -578,22 +583,27 @@ async def auto_refine(req: JobIdRequest):
 
             # 2. Initial test
             yield _sse_event("progress", {"text": "Testing on sample products..."})
-            test_results = await recipe_module.test_recipe(
-                req.job_id, current_recipe
-            )
+            test_results = await recipe_module.test_recipe(req.job_id, current_recipe)
             current_recipe = _load_json_artifact(job_path, "recipe.json")
 
-            avg = _calc_avg_score(test_results)
-            all_passed = all(
-                tr.get("validation", {}).get("passed", False)
-                for tr in test_results
+            def check_quality(results):
+                """Check if test results meet quality threshold."""
+                avg = _calc_avg_score(results)
+                all_passed = all(
+                    tr.get("validation", {}).get("passed", False) for tr in results
+                )
+                return avg, all_passed
+
+            avg, all_passed = check_quality(test_results)
+            yield _sse_event(
+                "score",
+                {
+                    "attempt": 1,
+                    "avg": avg,
+                    "all_passed": all_passed,
+                    "details": _summarize_results(test_results),
+                },
             )
-            yield _sse_event("score", {
-                "attempt": 1,
-                "avg": avg,
-                "all_passed": all_passed,
-                "details": _summarize_results(test_results),
-            })
 
             # 3. Auto-refine loop (up to 3 iterations)
             iterations = 1
@@ -602,54 +612,61 @@ async def auto_refine(req: JobIdRequest):
                     break
 
                 feedback = recipe_module.build_auto_feedback(test_results)
-                yield _sse_event("progress", {
-                    "text": f"Refining recipe — attempt {i + 2}..."
-                })
+                yield _sse_event(
+                    "progress", {"text": f"Refining recipe — attempt {i + 2}..."}
+                )
 
                 current_recipe = await recipe_module.refine_recipe(
                     req.job_id, current_recipe, feedback, test_results
                 )
 
-                yield _sse_event("progress", {
-                    "text": f"Re-testing — attempt {i + 2}..."
-                })
+                yield _sse_event(
+                    "progress", {"text": f"Re-testing — attempt {i + 2}..."}
+                )
                 test_results = await recipe_module.test_recipe(
                     req.job_id, current_recipe
                 )
                 current_recipe = _load_json_artifact(job_path, "recipe.json")
 
-                avg = _calc_avg_score(test_results)
-                all_passed = all(
-                    tr.get("validation", {}).get("passed", False)
-                    for tr in test_results
-                )
+                avg, all_passed = check_quality(test_results)
                 iterations = i + 2
 
-                yield _sse_event("score", {
-                    "attempt": iterations,
-                    "avg": avg,
-                    "all_passed": all_passed,
-                    "details": _summarize_results(test_results),
-                })
+                yield _sse_event(
+                    "score",
+                    {
+                        "attempt": iterations,
+                        "avg": avg,
+                        "all_passed": all_passed,
+                        "details": _summarize_results(test_results),
+                    },
+                )
 
             # 4. Final result
             reached = avg >= 90 and all_passed
-            remaining_issues = []
-            if not reached:
-                for tr in test_results:
-                    issues = tr.get("validation", {}).get("issues", [])
-                    if issues:
-                        name = tr.get("product_name") or tr.get("product_id")
-                        remaining_issues.append({"product": name, "issues": issues})
+            remaining_issues = (
+                [
+                    {
+                        "product": tr.get("product_name") or tr.get("product_id"),
+                        "issues": issues,
+                    }
+                    for tr in test_results
+                    if (issues := tr.get("validation", {}).get("issues", []))
+                ]
+                if not reached
+                else []
+            )
 
-            yield _sse_event("complete", {
-                "test_results": test_results,
-                "recipe": current_recipe,
-                "reached_threshold": reached,
-                "iterations": iterations,
-                "avg_score": avg,
-                "remaining_issues": remaining_issues,
-            })
+            yield _sse_event(
+                "complete",
+                {
+                    "test_results": test_results,
+                    "recipe": current_recipe,
+                    "reached_threshold": reached,
+                    "iterations": iterations,
+                    "avg_score": avg,
+                    "remaining_issues": remaining_issues,
+                },
+            )
 
         except Exception as e:
             logger.exception("auto-refine failed for job %s", req.job_id)
@@ -669,21 +686,23 @@ def _calc_avg_score(test_results: list[dict]) -> int:
     """Calculate average validation score from test results."""
     if not test_results:
         return 0
-    total = sum(tr.get("validation", {}).get("score", 0) for tr in test_results)
-    return round(total / len(test_results))
+    return round(
+        sum(tr.get("validation", {}).get("score", 0) for tr in test_results)
+        / len(test_results)
+    )
 
 
 def _summarize_results(test_results: list[dict]) -> list[dict]:
     """Create a brief summary of each test result."""
-    summary = []
-    for tr in test_results:
-        summary.append({
+    return [
+        {
             "product": tr.get("product_name") or tr.get("product_id", "?"),
             "score": tr.get("validation", {}).get("score", 0),
             "passed": tr.get("validation", {}).get("passed", False),
             "issues": tr.get("validation", {}).get("issues", []),
-        })
-    return summary
+        }
+        for tr in test_results
+    ]
 
 
 # ---------------------------------------------------------------------------

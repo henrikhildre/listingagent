@@ -35,7 +35,6 @@ from gemini_client import (
     generate_with_images,
     generate_with_text,
     BATCH_MODEL,
-    REASONING_MODEL,
 )
 from recipe import (
     fill_template,
@@ -52,6 +51,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # WebSocket helpers
 # ---------------------------------------------------------------------------
+
 
 async def _send_ws_message(websocket_connections: set, message: dict):
     """
@@ -86,20 +86,24 @@ async def _send_progress(
     status: str = "ok",
 ):
     """Send a typed progress message over the WebSocket."""
-    await _send_ws_message(websocket_connections, {
-        "type": "progress",
-        "product_id": product_id,
-        "completed": completed,
-        "total": total,
-        "score": score,
-        "title": title,
-        "status": status,
-    })
+    await _send_ws_message(
+        websocket_connections,
+        {
+            "type": "progress",
+            "product_id": product_id,
+            "completed": completed,
+            "total": total,
+            "score": score,
+            "title": title,
+            "status": status,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # Single-product processing
 # ---------------------------------------------------------------------------
+
 
 async def _process_product(
     job_id: str,
@@ -165,9 +169,7 @@ async def _process_product(
         validation.get("score", 0),
     )
 
-    issues_feedback = "\n".join(
-        f"- {issue}" for issue in validation.get("issues", [])
-    )
+    issues_feedback = "\n".join(f"- {issue}" for issue in validation.get("issues", []))
     retry_prompt = (
         f"{filled_prompt}\n\n"
         f"## IMPORTANT — Previous attempt had these issues, please fix them:\n"
@@ -181,14 +183,16 @@ async def _process_product(
         # higher-level reasoning model).
         if image_parts:
             raw_text = await generate_with_images(
-                prompt=retry_prompt + "\n\nRespond with ONLY valid JSON matching the listing schema.",
+                prompt=retry_prompt
+                + "\n\nRespond with ONLY valid JSON matching the listing schema.",
                 image_parts=image_parts,
                 model=BATCH_MODEL,
                 thinking_level="high",
             )
         else:
             raw_text = await generate_with_text(
-                prompt=retry_prompt + "\n\nRespond with ONLY valid JSON matching the listing schema.",
+                prompt=retry_prompt
+                + "\n\nRespond with ONLY valid JSON matching the listing schema.",
                 model=BATCH_MODEL,
                 thinking_level="high",
             )
@@ -274,7 +278,7 @@ def _parse_json_from_text(text: str) -> dict:
     # Strip markdown code fences
     if cleaned.startswith("```"):
         first_newline = cleaned.index("\n")
-        cleaned = cleaned[first_newline + 1:]
+        cleaned = cleaned[first_newline + 1 :]
     if cleaned.endswith("```"):
         cleaned = cleaned[:-3]
     cleaned = cleaned.strip()
@@ -301,6 +305,7 @@ def _parse_json_from_text(text: str) -> dict:
 # Batch execution
 # ---------------------------------------------------------------------------
 
+
 async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     """
     Execute the approved recipe against every product.
@@ -322,11 +327,14 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     logger.info("Starting batch execution for job %s: %d products", job_id, total)
 
     # Notify clients that execution has started
-    await _send_ws_message(websocket_connections, {
-        "type": "batch_start",
-        "job_id": job_id,
-        "total": total,
-    })
+    await _send_ws_message(
+        websocket_connections,
+        {
+            "type": "batch_start",
+            "job_id": job_id,
+            "total": total,
+        },
+    )
 
     job_path = get_job_path(job_id)
     listings_dir = job_path / "output" / "listings"
@@ -371,7 +379,7 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     elapsed = time.monotonic() - start_time
 
     # Post-processing: CSV, report, ZIP
-    csv_path = await generate_summary_csv(job_id, results)
+    await generate_summary_csv(job_id, results)
     report = generate_batch_report(job_id, results, elapsed_seconds=elapsed)
 
     # Save report
@@ -383,11 +391,14 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     create_output_zip(job_id)
 
     # Notify completion
-    await _send_ws_message(websocket_connections, {
-        "type": "batch_complete",
-        "job_id": job_id,
-        "report": report,
-    })
+    await _send_ws_message(
+        websocket_connections,
+        {
+            "type": "batch_complete",
+            "job_id": job_id,
+            "report": report,
+        },
+    )
 
     logger.info(
         "Batch execution complete for job %s: %d/%d succeeded in %.1fs",
@@ -422,6 +433,7 @@ def _save_listing(path: Path, result: dict):
 # Summary CSV
 # ---------------------------------------------------------------------------
 
+
 async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
     """
     Write a summary CSV of all generated listings.
@@ -453,19 +465,23 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
         for result in results:
             listing = result.get("listing") or {}
             tags_list = listing.get("tags", [])
-            tags_str = ";".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+            tags_str = (
+                ";".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+            )
 
-            writer.writerow({
-                "product_id": result.get("product_id", ""),
-                "sku": result.get("sku") or "",
-                "title": listing.get("title", ""),
-                "description": listing.get("description", ""),
-                "tags": tags_str,
-                "suggested_price": listing.get("suggested_price", ""),
-                "confidence": listing.get("confidence", ""),
-                "validation_score": result.get("validation", {}).get("score", ""),
-                "image_filename": result.get("image_filename") or "",
-            })
+            writer.writerow(
+                {
+                    "product_id": result.get("product_id", ""),
+                    "sku": result.get("sku") or "",
+                    "title": listing.get("title", ""),
+                    "description": listing.get("description", ""),
+                    "tags": tags_str,
+                    "suggested_price": listing.get("suggested_price", ""),
+                    "confidence": listing.get("confidence", ""),
+                    "validation_score": result.get("validation", {}).get("score", ""),
+                    "image_filename": result.get("image_filename") or "",
+                }
+            )
 
     logger.info("Summary CSV written to %s", csv_path)
     return csv_path
@@ -474,6 +490,7 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
 # ---------------------------------------------------------------------------
 # Batch report
 # ---------------------------------------------------------------------------
+
 
 def generate_batch_report(
     job_id: str,
@@ -516,7 +533,10 @@ def generate_batch_report(
 
     logger.info(
         "Batch report: %d total, %d succeeded, %d failed, avg_score=%.1f",
-        total, succeeded, failed, avg_score,
+        total,
+        succeeded,
+        failed,
+        avg_score,
     )
 
     return report
