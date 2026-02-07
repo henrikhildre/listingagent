@@ -17,8 +17,9 @@ load_dotenv()
 # Environment configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-REASONING_MODEL = os.getenv("REASONING_MODEL", "gemini-2.5-pro-preview-06-05")
-BATCH_MODEL = os.getenv("BATCH_MODEL", "gemini-2.5-flash-preview-05-20")
+BATCH_MODEL = os.getenv("BATCH_MODEL", "gemini-3-flash-preview")
+_use_pro = os.getenv("USE_PRO", "true").lower() in ("true", "1", "yes")
+REASONING_MODEL = os.getenv("REASONING_MODEL", "gemini-3-pro-preview" if _use_pro else BATCH_MODEL)
 
 # Initialize client (lazy — will fail on first API call if key is missing)
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
