@@ -479,10 +479,9 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         "\n".join(f"- {item}" for item in always_mention) if always_mention else "None"
     )
 
-    # Static replacements (style profile fields)
+    # Style profile replacements
     replacements = {
         "{style_profile_summary}": style_summary,
-        "{product_id}": product.get("id") or "N/A",
         "{title_format}": style_profile.get("title_format", "N/A"),
         "{description_structure}": style_profile.get("description_structure", "N/A"),
         "{pricing_strategy}": style_profile.get("pricing_strategy", "N/A"),
@@ -494,23 +493,8 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         "{tags_style}": style_profile.get("tags_style", "mix of broad and specific"),
     }
 
-    # Legacy fixed-name aliases for backward compatibility with old recipes
-    replacements["{product_name}"] = (
-        product.get("name") or product.get("product_name") or "N/A"
-    )
-    replacements["{sku}"] = product.get("sku") or "N/A"
-    replacements["{category}"] = product.get("category") or "N/A"
-    replacements["{wholesale_price}"] = str(
-        product.get("price") or product.get("wholesale_price") or "N/A"
-    )
-
-    # Legacy metadata catch-all
-    metadata = product.get("metadata", {})
-    replacements["{metadata}"] = (
-        ", ".join(f"{k}: {v}" for k, v in metadata.items()) if metadata else "None"
-    )
-
-    # Dynamic replacements: every product field becomes a {field_name} placeholder
+    # Dynamic product field replacements — every key on the product dict
+    # becomes a {field_name} placeholder the recipe template can use
     for key, value in product.items():
         placeholder = f"{{{key}}}"
         if placeholder not in replacements:
