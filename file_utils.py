@@ -5,6 +5,7 @@ image processing, and output packaging.
 """
 
 from pathlib import Path
+import random
 import shutil
 import zipfile
 from typing import Tuple
@@ -124,6 +125,68 @@ def read_spreadsheet_preview(filepath: Path, max_rows: int = 5) -> dict:
         return {"headers": headers, "rows": rows, "total_rows": total_rows}
 
     raise ValueError(f"Unsupported spreadsheet format: {ext}")
+
+
+def convert_spreadsheet_to_csv(filepath: Path) -> Path:
+    """Convert xlsx/xls/tsv to CSV. CSV files are returned as-is.
+
+    The converted CSV is written alongside the original file.
+    """
+    ext = filepath.suffix.lower()
+    if ext == ".csv":
+        return filepath
+
+    csv_path = filepath.with_suffix(".csv")
+    if csv_path.exists():
+        return csv_path
+
+    if ext == ".tsv":
+        df = pd.read_csv(filepath, sep="\t")
+    else:
+        df = pd.read_excel(filepath)
+
+    df.to_csv(csv_path, index=False)
+    return csv_path
+
+
+def read_spreadsheet_sample(filepath: Path, max_sample: int = 15) -> dict:
+    """Read a strategic sample of rows for LLM script development.
+
+    Selects first 5, last 5, and up to 5 random middle rows to give the
+    LLM a representative view of data variations.
+
+    Returns: {"headers": [...], "sample_csv": "...", "total_rows": int}
+    """
+    csv_path = convert_spreadsheet_to_csv(filepath)
+    df = pd.read_csv(csv_path)
+    total_rows = len(df)
+
+    if total_rows <= max_sample:
+        sample_df = df
+    else:
+        head = df.head(5)
+        tail = df.tail(5)
+        middle_pool = range(5, total_rows - 5)
+        middle_indices = sorted(random.sample(
+            list(middle_pool), min(5, len(middle_pool))
+        ))
+        middle = df.iloc[middle_indices]
+        sample_df = pd.concat([head, middle, tail]).drop_duplicates()
+
+    return {
+        "headers": df.columns.tolist(),
+        "sample_csv": sample_df.to_csv(index=False),
+        "total_rows": total_rows,
+    }
+
+
+def read_full_csv(filepath: Path) -> str:
+    """Read the full spreadsheet as a CSV string for server-side script execution.
+
+    Converts xlsx/xls/tsv to CSV first if needed.
+    """
+    csv_path = convert_spreadsheet_to_csv(filepath)
+    return csv_path.read_text(encoding="utf-8")
 
 
 def load_image_as_bytes(filepath: Path) -> Tuple[bytes, str]:

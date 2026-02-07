@@ -145,24 +145,38 @@ async def draft_recipe(
 
     # Build a summary of available product fields from the data model
     sample_products = data_model.get("products", [])[:3]
-    available_fields = set()
-    for p in data_model.get("products", []):
-        available_fields.add("product_name")
-        available_fields.add("product_id")
-        if p.get("sku"):
-            available_fields.add("sku")
-        if p.get("category"):
-            available_fields.add("category")
-        if p.get("price"):
-            available_fields.add("wholesale_price")
-        for key in p.get("metadata", {}):
-            available_fields.add(key)
-        if p.get("image_files"):
-            available_fields.add("product_image")
 
+    # Use dynamically discovered fields when available, fall back to inference
+    fields_discovered = data_model.get("fields_discovered", [])
+    if not fields_discovered:
+        # Legacy fallback: infer from product keys
+        for p in data_model.get("products", []):
+            fields_discovered = [
+                k for k in p.keys() if k not in ("id", "source", "image_files")
+            ]
+            break
+
+    available_fields = {"product_id", "product_image"} | set(fields_discovered)
     fields_list = ", ".join(sorted(available_fields))
 
     sample_data_str = json.dumps(sample_products, indent=2, default=str)
+
+    # Build dynamic variable listing for the prompt
+    variable_docs = [
+        "- {{style_profile_summary}} -- will be filled with the seller style info",
+        "- {{product_id}} -- product identifier",
+    ]
+    for field in sorted(fields_discovered):
+        variable_docs.append(f"- {{{{{field}}}}} -- from product data")
+    variable_docs.extend([
+        "- {{title_format}} -- from style profile",
+        "- {{description_structure}} -- from style profile",
+        "- {{pricing_strategy}} -- from style profile",
+        "- {{platform}} -- target platform",
+        "- {{always_mention_list}} -- mandatory mentions",
+        "- [The product photo will be attached separately]",
+    ])
+    variables_block = "\n".join(variable_docs)
 
     prompt = f"""You are building a product listing recipe for a marketplace seller.
 
@@ -181,19 +195,7 @@ Create a recipe with THREE artifacts:
 ### 1. Prompt Template
 Write the exact prompt that will be sent to an AI model for EACH product.
 Use {{curly_brace_variables}} for product-specific data. Available variables:
-- {{style_profile_summary}} -- will be filled with the seller style info
-- {{product_name}} -- product name
-- {{product_id}} -- product identifier
-- {{sku}} -- SKU if available
-- {{category}} -- category if available
-- {{wholesale_price}} -- price if available
-- {{metadata}} -- any additional metadata as key: value pairs
-- {{title_format}} -- from style profile
-- {{description_structure}} -- from style profile
-- {{pricing_strategy}} -- from style profile
-- {{platform}} -- target platform
-- {{always_mention_list}} -- mandatory mentions
-- [The product photo will be attached separately]
+{variables_block}
 
 The prompt should be detailed, covering title format, description style,
 tag strategy, pricing approach, and any platform-specific requirements.
@@ -471,27 +473,16 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         else "No style profile provided"
     )
 
-    # Build metadata string
-    metadata = product.get("metadata", {})
-    metadata_str = (
-        ", ".join(f"{k}: {v}" for k, v in metadata.items()) if metadata else "None"
-    )
-
     # Build always-mention list
     always_mention = style_profile.get("always_mention", [])
     always_mention_str = (
         "\n".join(f"- {item}" for item in always_mention) if always_mention else "None"
     )
 
-    # Replacement mapping
+    # Static replacements (style profile fields)
     replacements = {
         "{style_profile_summary}": style_summary,
-        "{product_name}": product.get("name") or "N/A",
         "{product_id}": product.get("id") or "N/A",
-        "{sku}": product.get("sku") or "N/A",
-        "{category}": product.get("category") or "N/A",
-        "{wholesale_price}": str(product.get("price") or "N/A"),
-        "{metadata}": metadata_str,
         "{title_format}": style_profile.get("title_format", "N/A"),
         "{description_structure}": style_profile.get("description_structure", "N/A"),
         "{pricing_strategy}": style_profile.get("pricing_strategy", "N/A"),
@@ -502,6 +493,33 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         ),
         "{tags_style}": style_profile.get("tags_style", "mix of broad and specific"),
     }
+
+    # Legacy fixed-name aliases for backward compatibility with old recipes
+    replacements["{product_name}"] = (
+        product.get("name") or product.get("product_name") or "N/A"
+    )
+    replacements["{sku}"] = product.get("sku") or "N/A"
+    replacements["{category}"] = product.get("category") or "N/A"
+    replacements["{wholesale_price}"] = str(
+        product.get("price") or product.get("wholesale_price") or "N/A"
+    )
+
+    # Legacy metadata catch-all
+    metadata = product.get("metadata", {})
+    replacements["{metadata}"] = (
+        ", ".join(f"{k}: {v}" for k, v in metadata.items()) if metadata else "None"
+    )
+
+    # Dynamic replacements: every product field becomes a {field_name} placeholder
+    for key, value in product.items():
+        placeholder = f"{{{key}}}"
+        if placeholder not in replacements:
+            if value is None or value == "":
+                replacements[placeholder] = "N/A"
+            elif isinstance(value, list):
+                replacements[placeholder] = ", ".join(str(v) for v in value)
+            else:
+                replacements[placeholder] = str(value)
 
     result = template
     for placeholder, value in replacements.items():
