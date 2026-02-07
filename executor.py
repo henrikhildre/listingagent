@@ -1,0 +1,522 @@
+"""
+Phase 4: Batch Execution.
+
+Applies the approved recipe to every product in the data model.
+
+For each product the module:
+1. Fills the prompt template with product data + style profile.
+2. Loads the product image (if available).
+3. Calls Gemini Flash with structured output (low thinking).
+4. Validates the result locally via the recipe's validation code.
+5. On validation failure, retries once with higher thinking and the
+   validation issues fed back as guidance.
+6. Saves the individual listing JSON.
+7. Streams progress to connected WebSocket clients.
+
+After the full batch:
+- Generates summary.csv
+- Generates batch report (report.json)
+- Creates downloadable ZIP via file_utils
+
+Rate limiting: 1-second delay between items (free-tier 60 req/min).
+"""
+
+import asyncio
+import csv
+import json
+import logging
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from file_utils import get_job_path, load_image_as_bytes, create_output_zip
+from gemini_client import (
+    generate_structured,
+    generate_with_images,
+    generate_with_text,
+    BATCH_MODEL,
+    REASONING_MODEL,
+)
+from recipe import (
+    fill_template,
+    run_validation,
+    load_data_model,
+    load_style_profile,
+    load_recipe,
+    DEFAULT_OUTPUT_SCHEMA,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket helpers
+# ---------------------------------------------------------------------------
+
+async def _send_ws_message(websocket_connections: set, message: dict):
+    """
+    Broadcast a JSON message to all connected WebSocket clients.
+
+    Disconnected / broken connections are silently removed from the set.
+    """
+    if not websocket_connections:
+        return
+
+    payload = json.dumps(message, default=str)
+    dead = set()
+
+    for ws in websocket_connections:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            # Client disconnected -- mark for removal
+            dead.add(ws)
+
+    # Clean up dead connections
+    websocket_connections -= dead
+
+
+async def _send_progress(
+    websocket_connections: set,
+    product_id: str,
+    completed: int,
+    total: int,
+    score: int | None = None,
+    title: str | None = None,
+    status: str = "ok",
+):
+    """Send a typed progress message over the WebSocket."""
+    await _send_ws_message(websocket_connections, {
+        "type": "progress",
+        "product_id": product_id,
+        "completed": completed,
+        "total": total,
+        "score": score,
+        "title": title,
+        "status": status,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Single-product processing
+# ---------------------------------------------------------------------------
+
+async def _process_product(
+    job_id: str,
+    product: dict,
+    recipe: dict,
+    style_profile: dict,
+    output_schema: dict,
+) -> dict:
+    """
+    Generate a listing for a single product.
+
+    First attempt uses Flash with low thinking (structured output).
+    If validation fails, retries once with higher thinking and the
+    validation issues included as feedback.
+
+    Returns a result dict with keys:
+        product_id, sku, listing, validation, image_filename, retried, failed
+    """
+    product_id = product.get("id", "unknown")
+    sku = product.get("sku")
+    image_files = product.get("image_files", [])
+    image_filename = image_files[0] if image_files else None
+
+    # Fill prompt
+    filled_prompt = fill_template(recipe["prompt_template"], product, style_profile)
+
+    # Load images
+    image_parts = _load_product_images(job_id, image_files)
+
+    # --- Attempt 1: Flash, low thinking, structured output ----------------
+    try:
+        listing = await generate_structured(
+            prompt=filled_prompt,
+            image_parts=image_parts if image_parts else None,
+            schema=output_schema,
+            model=BATCH_MODEL,
+            thinking_level="low",
+        )
+    except Exception as e:
+        logger.error("Gemini call failed for product %s: %s", product_id, e)
+        return _failed_result(product_id, sku, image_filename, str(e))
+
+    # Validate
+    validation = run_validation(
+        listing, style_profile, recipe.get("validation_code", "")
+    )
+
+    if validation.get("passed", False):
+        return {
+            "product_id": product_id,
+            "sku": sku,
+            "listing": listing,
+            "validation": validation,
+            "image_filename": image_filename,
+            "retried": False,
+            "failed": False,
+        }
+
+    # --- Attempt 2: retry with higher thinking + feedback -----------------
+    logger.info(
+        "Product %s failed validation (score=%d), retrying with higher thinking",
+        product_id,
+        validation.get("score", 0),
+    )
+
+    issues_feedback = "\n".join(
+        f"- {issue}" for issue in validation.get("issues", [])
+    )
+    retry_prompt = (
+        f"{filled_prompt}\n\n"
+        f"## IMPORTANT — Previous attempt had these issues, please fix them:\n"
+        f"{issues_feedback}\n\n"
+        f"Make sure to address every issue listed above."
+    )
+
+    try:
+        # Use generate_with_images / generate_with_text with higher thinking,
+        # then parse JSON manually (structured output not easily combined with
+        # higher-level reasoning model).
+        if image_parts:
+            raw_text = await generate_with_images(
+                prompt=retry_prompt + "\n\nRespond with ONLY valid JSON matching the listing schema.",
+                image_parts=image_parts,
+                model=BATCH_MODEL,
+                thinking_level="high",
+            )
+        else:
+            raw_text = await generate_with_text(
+                prompt=retry_prompt + "\n\nRespond with ONLY valid JSON matching the listing schema.",
+                model=BATCH_MODEL,
+                thinking_level="high",
+            )
+
+        listing = _parse_json_from_text(raw_text)
+    except Exception as e:
+        logger.error("Retry failed for product %s: %s", product_id, e)
+        # Return the first attempt's result as a failure
+        return {
+            "product_id": product_id,
+            "sku": sku,
+            "listing": listing,  # first attempt listing
+            "validation": validation,
+            "image_filename": image_filename,
+            "retried": True,
+            "failed": True,
+            "error": str(e),
+        }
+
+    # Validate retry result
+    retry_validation = run_validation(
+        listing, style_profile, recipe.get("validation_code", "")
+    )
+
+    return {
+        "product_id": product_id,
+        "sku": sku,
+        "listing": listing,
+        "validation": retry_validation,
+        "image_filename": image_filename,
+        "retried": True,
+        "failed": not retry_validation.get("passed", False),
+    }
+
+
+def _load_product_images(
+    job_id: str, image_files: list[str], max_images: int = 2
+) -> list[tuple[bytes, str]]:
+    """Load up to max_images for a product, searching images/ and uploads/."""
+    job_path = get_job_path(job_id)
+    parts: list[tuple[bytes, str]] = []
+
+    for img_filename in image_files[:max_images]:
+        for subdir in ("images", "uploads"):
+            img_path = job_path / subdir / img_filename
+            if img_path.exists():
+                try:
+                    img_bytes, mime_type = load_image_as_bytes(img_path)
+                    parts.append((img_bytes, mime_type))
+                except Exception as e:
+                    logger.warning("Failed to load image %s: %s", img_path, e)
+                break
+
+    return parts
+
+
+def _failed_result(
+    product_id: str,
+    sku: str | None,
+    image_filename: str | None,
+    error: str,
+) -> dict:
+    """Build a result dict for a product that failed all attempts."""
+    return {
+        "product_id": product_id,
+        "sku": sku,
+        "listing": None,
+        "validation": {"passed": False, "score": 0, "issues": [error]},
+        "image_filename": image_filename,
+        "retried": False,
+        "failed": True,
+        "error": error,
+    }
+
+
+def _parse_json_from_text(text: str) -> dict:
+    """
+    Extract a JSON object from a model response that may include
+    markdown fences or surrounding prose.
+    """
+    cleaned = text.strip()
+
+    # Strip markdown code fences
+    if cleaned.startswith("```"):
+        first_newline = cleaned.index("\n")
+        cleaned = cleaned[first_newline + 1:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    # Try direct parse first
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Try to find the first { ... } block
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError("Could not parse JSON from model response")
+
+
+# ---------------------------------------------------------------------------
+# Batch execution
+# ---------------------------------------------------------------------------
+
+async def execute_batch(job_id: str, websocket_connections: set) -> dict:
+    """
+    Execute the approved recipe against every product.
+
+    Streams progress via WebSocket and returns a batch report dict.
+    """
+    # Load artifacts
+    recipe = load_recipe(job_id)
+    data_model = load_data_model(job_id)
+    style_profile = load_style_profile(job_id)
+
+    if not recipe.get("approved"):
+        logger.warning("Recipe for job %s is not approved, executing anyway", job_id)
+
+    products = data_model.get("products", [])
+    total = len(products)
+    output_schema = recipe.get("output_schema", DEFAULT_OUTPUT_SCHEMA)
+
+    logger.info("Starting batch execution for job %s: %d products", job_id, total)
+
+    # Notify clients that execution has started
+    await _send_ws_message(websocket_connections, {
+        "type": "batch_start",
+        "job_id": job_id,
+        "total": total,
+    })
+
+    job_path = get_job_path(job_id)
+    listings_dir = job_path / "output" / "listings"
+    listings_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict] = []
+    start_time = time.monotonic()
+
+    for idx, product in enumerate(products):
+        product_id = product.get("id", f"product_{idx}")
+
+        # Process
+        result = await _process_product(
+            job_id, product, recipe, style_profile, output_schema
+        )
+        results.append(result)
+
+        # Save individual listing JSON (even partial / failed ones)
+        listing_path = listings_dir / f"{product_id}.json"
+        _save_listing(listing_path, result)
+
+        # Stream progress
+        completed = idx + 1
+        score = result.get("validation", {}).get("score")
+        title = (result.get("listing") or {}).get("title")
+        status = "failed" if result.get("failed") else "ok"
+
+        await _send_progress(
+            websocket_connections,
+            product_id=product_id,
+            completed=completed,
+            total=total,
+            score=score,
+            title=title,
+            status=status,
+        )
+
+        # Rate-limit delay (skip after the last item)
+        if completed < total:
+            await asyncio.sleep(1)
+
+    elapsed = time.monotonic() - start_time
+
+    # Post-processing: CSV, report, ZIP
+    csv_path = await generate_summary_csv(job_id, results)
+    report = generate_batch_report(job_id, results, elapsed_seconds=elapsed)
+
+    # Save report
+    report_path = job_path / "output" / "report.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, default=str)
+
+    # Package into ZIP
+    create_output_zip(job_id)
+
+    # Notify completion
+    await _send_ws_message(websocket_connections, {
+        "type": "batch_complete",
+        "job_id": job_id,
+        "report": report,
+    })
+
+    logger.info(
+        "Batch execution complete for job %s: %d/%d succeeded in %.1fs",
+        job_id,
+        report["succeeded"],
+        report["total"],
+        elapsed,
+    )
+
+    return report
+
+
+def _save_listing(path: Path, result: dict):
+    """Persist a single listing result to disk."""
+    output = {
+        "product_id": result["product_id"],
+        "sku": result.get("sku"),
+        "listing": result.get("listing"),
+        "validation": result.get("validation"),
+        "image_filename": result.get("image_filename"),
+        "retried": result.get("retried", False),
+        "failed": result.get("failed", False),
+    }
+    if result.get("error"):
+        output["error"] = result["error"]
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Summary CSV
+# ---------------------------------------------------------------------------
+
+async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
+    """
+    Write a summary CSV of all generated listings.
+
+    Columns: product_id, sku, title, description, tags, suggested_price,
+             confidence, validation_score, image_filename
+
+    Returns the path to the CSV file.
+    """
+    job_path = get_job_path(job_id)
+    csv_path = job_path / "output" / "summary.csv"
+
+    fieldnames = [
+        "product_id",
+        "sku",
+        "title",
+        "description",
+        "tags",
+        "suggested_price",
+        "confidence",
+        "validation_score",
+        "image_filename",
+    ]
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for result in results:
+            listing = result.get("listing") or {}
+            tags_list = listing.get("tags", [])
+            tags_str = ";".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+
+            writer.writerow({
+                "product_id": result.get("product_id", ""),
+                "sku": result.get("sku") or "",
+                "title": listing.get("title", ""),
+                "description": listing.get("description", ""),
+                "tags": tags_str,
+                "suggested_price": listing.get("suggested_price", ""),
+                "confidence": listing.get("confidence", ""),
+                "validation_score": result.get("validation", {}).get("score", ""),
+                "image_filename": result.get("image_filename") or "",
+            })
+
+    logger.info("Summary CSV written to %s", csv_path)
+    return csv_path
+
+
+# ---------------------------------------------------------------------------
+# Batch report
+# ---------------------------------------------------------------------------
+
+def generate_batch_report(
+    job_id: str,
+    results: list[dict],
+    elapsed_seconds: float = 0.0,
+) -> dict:
+    """
+    Compute aggregate stats and persist report.json.
+
+    Returns a report dict with: total, succeeded, failed, retried,
+    avg_score, elapsed_seconds, completed_at.
+    """
+    total = len(results)
+    succeeded = sum(1 for r in results if not r.get("failed", False))
+    failed = total - succeeded
+    retried = sum(1 for r in results if r.get("retried", False))
+
+    scores = [
+        r.get("validation", {}).get("score", 0)
+        for r in results
+        if r.get("listing") is not None
+    ]
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+
+    report = {
+        "job_id": job_id,
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "retried": retried,
+        "avg_score": avg_score,
+        "elapsed_seconds": round(elapsed_seconds, 1),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Also save to disk
+    report_path = get_job_path(job_id) / "output" / "report.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, default=str)
+
+    logger.info(
+        "Batch report: %d total, %d succeeded, %d failed, avg_score=%.1f",
+        total, succeeded, failed, avg_score,
+    )
+
+    return report

@@ -1,0 +1,545 @@
+/* ListingAgent Custom Styles
+ * Minimal CSS for components not covered by Tailwind CDN
+ * Design: Clean, professional, inspired by Linear/Notion
+ */
+
+/* ============================================
+   CSS CUSTOM PROPERTIES
+   ============================================ */
+:root {
+    --color-primary: #3b82f6;  /* blue-500 */
+    --color-success: #22c55e;  /* green-500 */
+    --color-warning: #f59e0b;  /* amber-500 */
+    --color-error: #ef4444;    /* red-500 */
+    --color-bg: #ffffff;
+    --color-surface: #f8fafc;  /* slate-50 */
+    --color-border: #e2e8f0;   /* slate-200 */
+    --color-text: #1e293b;     /* slate-800 */
+    --color-text-secondary: #64748b; /* slate-500 */
+
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-medium: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   GLOBAL STYLES
+   ============================================ */
+* {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+}
+
+/* ============================================
+   CUSTOM SCROLLBAR
+   ============================================ */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-secondary);
+}
+
+/* Firefox scrollbar */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+}
+
+/* ============================================
+   CHAT BUBBLES
+   ============================================ */
+.chat-message {
+    margin-bottom: 1.5rem;
+    animation: fadeInUp var(--transition-medium);
+}
+
+.chat-message-user {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.chat-message-user .chat-bubble {
+    background-color: var(--color-primary);
+    color: white;
+    border-radius: 1rem 1rem 0.25rem 1rem;
+    padding: 0.75rem 1rem;
+    max-width: 70%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.chat-message-assistant {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.chat-message-assistant .chat-bubble {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    border-radius: 1rem 1rem 1rem 0.25rem;
+    padding: 0.75rem 1rem;
+    max-width: 80%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--color-border);
+}
+
+.chat-message-assistant .chat-bubble pre {
+    background-color: var(--color-bg);
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+    border: 1px solid var(--color-border);
+}
+
+.chat-message-assistant .chat-bubble code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.875rem;
+}
+
+/* ============================================
+   DRAG AND DROP ZONE
+   ============================================ */
+.drop-zone {
+    border: 2px dashed var(--color-border);
+    border-radius: 0.75rem;
+    padding: 3rem 2rem;
+    text-align: center;
+    background-color: var(--color-surface);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+}
+
+.drop-zone:hover {
+    border-color: var(--color-primary);
+    background-color: #eff6ff; /* blue-50 */
+}
+
+.drop-zone.dragover {
+    border-color: var(--color-primary);
+    background-color: #dbeafe; /* blue-100 */
+    border-style: solid;
+}
+
+.drop-zone-icon {
+    width: 3rem;
+    height: 3rem;
+    margin: 0 auto 1rem;
+    color: var(--color-text-secondary);
+}
+
+.drop-zone.dragover .drop-zone-icon {
+    color: var(--color-primary);
+}
+
+/* ============================================
+   FILE LIST
+   ============================================ */
+.file-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    margin-bottom: 0.5rem;
+    background-color: var(--color-bg);
+    transition: all var(--transition-fast);
+}
+
+.file-item:hover {
+    background-color: var(--color-surface);
+    border-color: var(--color-text-secondary);
+}
+
+.file-item-name {
+    font-size: 0.875rem;
+    color: var(--color-text);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.file-item-size {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    margin-left: 1rem;
+}
+
+.file-item-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.75rem;
+    color: var(--color-text-secondary);
+}
+
+/* ============================================
+   PROGRESS BAR
+   ============================================ */
+.progress-container {
+    width: 100%;
+    height: 0.5rem;
+    background-color: var(--color-surface);
+    border-radius: 9999px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background-color: var(--color-primary);
+    border-radius: 9999px;
+    transition: width var(--transition-medium);
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar.indeterminate {
+    width: 100%;
+}
+
+.progress-bar.indeterminate::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.3),
+        transparent
+    );
+    animation: progressShimmer 1.5s infinite;
+}
+
+@keyframes progressShimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+/* ============================================
+   LISTING CARDS (Results View)
+   ============================================ */
+.listing-card {
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    background-color: var(--color-bg);
+    transition: all var(--transition-fast);
+}
+
+.listing-card:hover {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    border-color: var(--color-text-secondary);
+}
+
+.listing-card-image {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 0.5rem;
+    background-color: var(--color-surface);
+    margin-bottom: 1rem;
+}
+
+.listing-card-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+}
+
+.listing-card-description {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.listing-card-price {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    margin-top: 1rem;
+}
+
+/* ============================================
+   LOADING SPINNER
+   ============================================ */
+.spinner {
+    width: 2rem;
+    height: 2rem;
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+.spinner-sm {
+    width: 1rem;
+    height: 1rem;
+    border-width: 2px;
+}
+
+.spinner-lg {
+    width: 3rem;
+    height: 3rem;
+    border-width: 4px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ============================================
+   VIEW TRANSITIONS
+   ============================================ */
+.view {
+    animation: fadeIn var(--transition-medium);
+}
+
+.view-enter {
+    animation: fadeInUp var(--transition-medium);
+}
+
+.view-exit {
+    animation: fadeOut var(--transition-fast);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(1rem);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+.text-gradient {
+    background: linear-gradient(135deg, var(--color-primary), #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.glass {
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.divider {
+    height: 1px;
+    background-color: var(--color-border);
+    margin: 1.5rem 0;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 9999px;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.badge-primary {
+    background-color: #dbeafe; /* blue-100 */
+    color: var(--color-primary);
+}
+
+.badge-success {
+    background-color: #dcfce7; /* green-100 */
+    color: var(--color-success);
+}
+
+.badge-warning {
+    background-color: #fef3c7; /* amber-100 */
+    color: var(--color-warning);
+}
+
+.badge-error {
+    background-color: #fee2e2; /* red-100 */
+    color: var(--color-error);
+}
+
+/* ============================================
+   CONTEXT PANEL (Phases 1-3)
+   ============================================ */
+.context-panel {
+    border-left: 1px solid var(--color-border);
+    background-color: var(--color-surface);
+    padding: 1.5rem;
+    overflow-y: auto;
+}
+
+.context-section {
+    margin-bottom: 2rem;
+}
+
+.context-section-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-secondary);
+    margin-bottom: 0.75rem;
+}
+
+.context-item {
+    padding: 0.75rem;
+    background-color: var(--color-bg);
+    border-radius: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+    border: 1px solid var(--color-border);
+}
+
+/* ============================================
+   BUTTON ENHANCEMENTS
+   ============================================ */
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+button:not(:disabled):active {
+    transform: scale(0.98);
+}
+
+.btn-primary {
+    background-color: var(--color-primary);
+    color: white;
+    transition: all var(--transition-fast);
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: #2563eb; /* blue-600 */
+    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
+}
+
+.btn-success {
+    background-color: var(--color-success);
+    color: white;
+    transition: all var(--transition-fast);
+}
+
+.btn-success:hover:not(:disabled) {
+    background-color: #16a34a; /* green-600 */
+    box-shadow: 0 4px 6px -1px rgba(34, 197, 94, 0.3);
+}
+
+/* ============================================
+   TOAST NOTIFICATIONS (if needed)
+   ============================================ */
+.toast {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    padding: 1rem 1.5rem;
+    border-radius: 0.75rem;
+    background-color: var(--color-text);
+    color: white;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    animation: slideInRight var(--transition-medium);
+    z-index: 1000;
+}
+
+.toast-success {
+    background-color: var(--color-success);
+}
+
+.toast-error {
+    background-color: var(--color-error);
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* ============================================
+   RESPONSIVE ADJUSTMENTS
+   ============================================ */
+@media (max-width: 768px) {
+    .chat-message-user .chat-bubble,
+    .chat-message-assistant .chat-bubble {
+        max-width: 90%;
+    }
+
+    .context-panel {
+        border-left: none;
+        border-top: 1px solid var(--color-border);
+    }
+
+    .toast {
+        bottom: 1rem;
+        right: 1rem;
+        left: 1rem;
+    }
+}
