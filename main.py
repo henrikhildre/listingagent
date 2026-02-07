@@ -40,7 +40,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import calibration
 import discovery
@@ -66,11 +66,27 @@ app = FastAPI(title="ListingAgent", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://listing.maybelater.no"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Security headers
+# ---------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers.pop("server", None)
+    return response
+
 
 # ---------------------------------------------------------------------------
 # Auth — per-session tokens with rate limiting
@@ -133,7 +149,7 @@ async def auth_middleware(request: Request, call_next):
 
 
 class LoginRequest(BaseModel):
-    password: str
+    password: str = Field(max_length=128)
 
 
 @app.post("/api/login")
