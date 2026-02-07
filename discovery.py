@@ -19,6 +19,7 @@ Key outputs:
 """
 
 import ast
+import hashlib
 import json
 import logging
 import re
@@ -240,8 +241,12 @@ async def build_data_model(job_id: str, conversation_history: list[dict]) -> dic
     else:
         sheet_path = uploads_dir / spreadsheets[0]
         data_model = await _build_spreadsheet_data_model(
-            sheet_path, spreadsheets[0], all_images, conversation_history
+            job_path, sheet_path, spreadsheets[0], all_images, conversation_history
         )
+
+    # Compute quality report and field stats
+    data_model["quality_report"] = _build_quality_report(data_model)
+    data_model["field_stats"] = _build_field_stats(data_model)
 
     # Save to job directory
     output_path = job_path / "data_model.json"
@@ -262,27 +267,41 @@ async def build_data_model(job_id: str, conversation_history: list[dict]) -> dic
 
 
 async def _build_spreadsheet_data_model(
+    job_path,
     sheet_path,
     sheet_filename: str,
     all_images: list[str],
     conversation_history: list[dict],
 ) -> dict:
-    """Full pipeline: sample → LLM script → server-side exec → validate → iterate."""
+    """Full pipeline: sample → LLM script → server-side exec → validate → iterate.
+
+    If a previously saved extraction script matches the column fingerprint of
+    this spreadsheet, it is reused without calling the LLM.
+    """
     sample = read_spreadsheet_sample(sheet_path)
     full_csv = read_full_csv(sheet_path)
+    col_fingerprint = _column_fingerprint(sample["headers"])
 
-    # Step 1: LLM develops script on sample
-    script, llm_text = await _develop_extraction_script(
-        sample, all_images, conversation_history
-    )
-    if not script:
-        raise ValueError("LLM did not produce an extraction script")
+    # Try reusing a saved script with matching columns
+    script = _load_saved_script(job_path, col_fingerprint)
+    if script:
+        logger.info("Reusing saved extraction script (fingerprint %s)", col_fingerprint)
+    else:
+        # Step 1: LLM develops script on sample
+        script, llm_text = await _develop_extraction_script(
+            sample, all_images, conversation_history
+        )
+        if not script:
+            raise ValueError("LLM did not produce an extraction script")
 
     # Step 2: Run server-side, validate, iterate on errors
     products = await _run_and_validate_script(
         script, full_csv, sample["total_rows"], all_images,
         sample, conversation_history,
     )
+
+    # Save the working script for reuse
+    _save_extraction_script(job_path, script, col_fingerprint, sample["headers"])
 
     return _assemble_data_model(
         products, all_images, sheet_filename,
@@ -664,6 +683,159 @@ def _assemble_data_model(
         ],
         "matching_strategy": "Script-based extraction with image filename matching",
     }
+
+
+# ---------------------------------------------------------------------------
+# Quality report
+# ---------------------------------------------------------------------------
+
+
+def _build_quality_report(data_model: dict) -> dict:
+    """Analyze extracted products and return a data quality summary.
+
+    The report gives the user a clear picture of what was extracted and
+    what might need attention before proceeding.
+    """
+    products = data_model.get("products", [])
+    fields = data_model.get("fields_discovered", [])
+    unmatched = data_model.get("unmatched_images", [])
+
+    total = len(products)
+    if total == 0:
+        return {"total_products": 0, "warnings": ["No products extracted"]}
+
+    # Per-field completeness
+    field_completeness = {}
+    for field in fields:
+        filled = sum(
+            1 for p in products
+            if p.get(field) is not None and str(p.get(field)).strip() not in ("", "N/A", "None")
+        )
+        field_completeness[field] = {
+            "filled": filled,
+            "total": total,
+            "pct": round(100 * filled / total),
+        }
+
+    # Image coverage
+    with_images = sum(1 for p in products if p.get("image_files"))
+    without_images = total - with_images
+
+    # Warnings
+    warnings = []
+    for field, info in field_completeness.items():
+        if info["pct"] < 50:
+            warnings.append(f'"{field}" is only {info["pct"]}% filled ({info["filled"]}/{total})')
+    if without_images > 0:
+        warnings.append(f"{without_images} product(s) have no matched images")
+    if unmatched:
+        warnings.append(f"{len(unmatched)} image(s) could not be matched to any product")
+
+    return {
+        "total_products": total,
+        "fields_discovered": fields,
+        "field_completeness": field_completeness,
+        "images_matched": with_images,
+        "images_unmatched": len(unmatched),
+        "products_without_images": without_images,
+        "warnings": warnings,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Field stats for recipe drafting
+# ---------------------------------------------------------------------------
+
+
+def _build_field_stats(data_model: dict) -> dict:
+    """Compute per-field statistics to help the recipe LLM write better prompts.
+
+    For each discovered field, reports the data type, sample values,
+    and (for numeric fields) the value range.
+    """
+    products = data_model.get("products", [])
+    fields = data_model.get("fields_discovered", [])
+
+    if not products:
+        return {}
+
+    stats = {}
+    for field in fields:
+        values = [
+            p.get(field) for p in products
+            if p.get(field) is not None and str(p.get(field)).strip() not in ("", "N/A", "None")
+        ]
+        if not values:
+            stats[field] = {"type": "empty", "filled": 0}
+            continue
+
+        # Try to detect numeric fields
+        numeric_vals = []
+        for v in values:
+            try:
+                numeric_vals.append(float(v))
+            except (ValueError, TypeError):
+                break  # not a numeric field
+
+        if len(numeric_vals) == len(values) and numeric_vals:
+            stats[field] = {
+                "type": "numeric",
+                "filled": len(values),
+                "min": round(min(numeric_vals), 2),
+                "max": round(max(numeric_vals), 2),
+                "sample": [str(v) for v in values[:3]],
+            }
+        else:
+            unique = list(dict.fromkeys(str(v) for v in values))  # ordered unique
+            stats[field] = {
+                "type": "text",
+                "filled": len(values),
+                "unique_count": len(unique),
+                "sample": unique[:5],
+            }
+
+    return stats
+
+
+# ---------------------------------------------------------------------------
+# Extraction script persistence
+# ---------------------------------------------------------------------------
+
+
+def _column_fingerprint(headers: list[str]) -> str:
+    """Stable hash of column headers so we can match scripts to formats."""
+    normalized = "|".join(h.strip().lower() for h in sorted(headers))
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def _save_extraction_script(
+    job_path, script: str, fingerprint: str, headers: list[str],
+):
+    """Persist the working extraction script for potential reuse."""
+    script_meta = {
+        "fingerprint": fingerprint,
+        "headers": headers,
+        "script": script,
+    }
+    path = job_path / "extraction_script.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(script_meta, f, indent=2, ensure_ascii=False)
+    logger.info("Saved extraction script (fingerprint %s)", fingerprint)
+
+
+def _load_saved_script(job_path, fingerprint: str) -> str | None:
+    """Load a saved extraction script if it matches the column fingerprint."""
+    path = job_path / "extraction_script.json"
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            meta = json.load(f)
+        if meta.get("fingerprint") == fingerprint:
+            return meta.get("script")
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------

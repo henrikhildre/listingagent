@@ -847,7 +847,22 @@ async function buildDataModel() {
 
         state.dataModel = result.data_model;
 
-        const productCount = (state.dataModel.products || []).length;
+        const qr = result.quality_report || {};
+        const productCount = qr.total_products || (state.dataModel.products || []).length;
+        let summary = `Extracted ${productCount} products`;
+        const fields = qr.fields_discovered || [];
+        if (fields.length) summary += ` with ${fields.length} fields`;
+        if (qr.images_matched) summary += `, ${qr.images_matched} images matched`;
+        summary += '.';
+
+        // Show warnings as a quality report message
+        const warnings = qr.warnings || [];
+        if (warnings.length) {
+            const warningLines = warnings.map(w => `- ${w}`).join('\n');
+            addMessage('assistant', `**Data Quality Report**\n${summary}\n\n**Heads up:**\n${warningLines}\n\nStarting brand profile...`);
+        } else {
+            addMessage('assistant', `**Data Quality Report**\n${summary} Everything looks clean.\n\nStarting brand profile...`);
+        }
         updateInlineProgress(progress, `Mapped ${productCount} products — starting brand profile...`);
 
         updateContextPanel();
@@ -1580,25 +1595,59 @@ function renderDataModelSection() {
 
     const products = state.dataModel.products || [];
     const unmatched = state.dataModel.unmatched_images || [];
+    const qr = state.dataModel.quality_report || {};
+    const fieldStats = state.dataModel.field_stats || {};
+    const fieldsDiscovered = state.dataModel.fields_discovered || [];
 
+    // -- Field completeness bars --
+    let fieldsHtml = '';
+    if (fieldsDiscovered.length > 0) {
+        const fieldCompleteness = qr.field_completeness || {};
+        fieldsDiscovered.slice(0, 10).forEach(field => {
+            const info = fieldCompleteness[field] || {};
+            const pct = info.pct ?? 100;
+            const stats = fieldStats[field] || {};
+            let detail = '';
+            if (stats.type === 'numeric') {
+                detail = `${stats.min}–${stats.max}`;
+            } else if (stats.unique_count) {
+                detail = `${stats.unique_count} unique`;
+            }
+            const barColor = pct === 100 ? 'bg-green-400' : pct >= 80 ? 'bg-blue-400' : 'bg-amber-400';
+            fieldsHtml += `
+                <div class="flex items-center gap-2 py-0.5">
+                    <span class="text-xs text-slate-500 w-24 truncate" title="${escapeHtml(field)}">${escapeHtml(field)}</span>
+                    <div class="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div class="${barColor} h-full rounded-full" style="width:${pct}%"></div>
+                    </div>
+                    <span class="text-xs text-slate-400 w-16 text-right">${detail || pct + '%'}</span>
+                </div>
+            `;
+        });
+        if (fieldsDiscovered.length > 10) {
+            fieldsHtml += `<div class="text-xs text-slate-400 text-center py-1">+ ${fieldsDiscovered.length - 10} more fields</div>`;
+        }
+    }
+
+    // -- Product list --
     let productsHtml = '';
     const displayProducts = products.slice(0, 8);
+    // Find a good display name: try first non-id/source/image_files text field
+    const nameField = fieldsDiscovered.find(f => {
+        const s = fieldStats[f];
+        return s && s.type === 'text';
+    });
     displayProducts.forEach(p => {
-        const name = p.name || p.sku || p.id;
-        const category = p.category ? ` (${p.category})` : '';
-        const price = p.price ? ` - $${p.price}` : '';
+        const name = p[nameField] || p.name || p.sku || p.id;
         const hasImage = p.image_files && p.image_files.length > 0;
         const imageIcon = hasImage
             ? '<svg class="w-3 h-3 text-green-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
             : '<svg class="w-3 h-3 text-slate-300 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>';
 
         productsHtml += `
-            <div class="context-item flex items-center justify-between">
-                <div class="flex items-center gap-2 min-w-0">
-                    ${imageIcon}
-                    <span class="text-sm truncate">${escapeHtml(name)}${category}</span>
-                </div>
-                <span class="text-xs text-slate-400 whitespace-nowrap">${price}</span>
+            <div class="context-item flex items-center gap-2 min-w-0">
+                ${imageIcon}
+                <span class="text-sm truncate">${escapeHtml(String(name))}</span>
             </div>
         `;
     });
@@ -1607,8 +1656,19 @@ function renderDataModelSection() {
         productsHtml += `<div class="text-xs text-slate-400 text-center py-2">+ ${products.length - 8} more products</div>`;
     }
 
+    // -- Warnings --
+    let warningsHtml = '';
+    const warnings = qr.warnings || [];
+    if (warnings.length > 0) {
+        warningsHtml = warnings.map(w => `
+            <div class="context-item bg-amber-50 border-amber-200">
+                <span class="text-xs text-amber-700">${escapeHtml(w)}</span>
+            </div>
+        `).join('');
+    }
+
     let unmatchedHtml = '';
-    if (unmatched.length > 0) {
+    if (unmatched.length > 0 && !warnings.length) {
         unmatchedHtml = `
             <div class="context-item bg-amber-50 border-amber-200">
                 <span class="text-sm text-amber-700">${unmatched.length} unmatched image${unmatched.length !== 1 ? 's' : ''}</span>
@@ -1622,6 +1682,18 @@ function renderDataModelSection() {
             ${productsHtml}
             ${unmatchedHtml}
         </div>
+        ${fieldsHtml ? `
+        <div class="context-section">
+            <div class="context-section-title">Fields (${fieldsDiscovered.length})</div>
+            ${fieldsHtml}
+        </div>
+        ` : ''}
+        ${warningsHtml ? `
+        <div class="context-section">
+            <div class="context-section-title">Warnings</div>
+            ${warningsHtml}
+        </div>
+        ` : ''}
     `;
 }
 

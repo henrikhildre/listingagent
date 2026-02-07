@@ -485,6 +485,7 @@ async def build_data_model(req: BuildDataModelRequest):
         "job_id": req.job_id,
         "data_model": data_model,
         "product_count": len(data_model.get("products", [])),
+        "quality_report": data_model.get("quality_report", {}),
     }
 
 
