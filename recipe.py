@@ -686,6 +686,30 @@ def select_diverse_samples(products: list[dict], count: int = 3) -> list[dict]:
 # 6. run_validation
 # ---------------------------------------------------------------------------
 
+def _check_code_safety(code: str) -> str | None:
+    """Parse code with AST and reject dangerous patterns. Returns error string or None."""
+    import ast
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return f"Syntax error: {e}"
+
+    for node in ast.walk(tree):
+        # Block dunder attribute access (e.g. __class__, __base__, __subclasses__)
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            return f"Blocked: access to '{node.attr}' is not allowed"
+        # Block import statements
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return "Blocked: import statements are not allowed"
+        # Block exec/eval/compile calls
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in ("exec", "eval", "compile", "open", "__import__"):
+                return f"Blocked: call to '{node.func.id}' is not allowed"
+
+    return None
+
+
 def run_validation(
     listing: dict,
     style_profile: dict,
@@ -700,6 +724,12 @@ def run_validation(
     Returns the validation result dict. Falls back to a basic check on error.
     """
     if not validation_code or not validation_code.strip():
+        return _basic_validation(listing, style_profile)
+
+    # AST safety check — reject dangerous patterns before executing
+    safety_error = _check_code_safety(validation_code)
+    if safety_error:
+        logger.warning("Validation code rejected: %s", safety_error)
         return _basic_validation(listing, style_profile)
 
     # Restricted globals -- only safe builtins
@@ -727,7 +757,6 @@ def run_validation(
         "any": any,
         "all": all,
         "isinstance": isinstance,
-        "type": type,
         "print": lambda *a, **kw: None,  # no-op print
         "True": True,
         "False": False,

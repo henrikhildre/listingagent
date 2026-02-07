@@ -73,21 +73,47 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Auth — HMAC-based session cookie
+# Auth — per-session tokens with rate limiting
 # ---------------------------------------------------------------------------
 
 APP_PASSWORD = os.getenv("APP_PASSWORD", "listingagent")
-_SESSION_SECRET = os.urandom(32)
-_SESSION_TOKEN = hmac.new(
-    _SESSION_SECRET, APP_PASSWORD.encode(), hashlib.sha256
-).hexdigest()
+_active_tokens: set[str] = set()
+
+# Rate limiting: track failed login attempts per IP
+_login_attempts: dict[str, list[float]] = {}  # ip -> list of timestamps
+_MAX_LOGIN_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 60
 
 _PUBLIC_PATHS = frozenset({"/", "/api/login", "/api/auth-check"})
 
 
 def _is_authenticated(request: Request) -> bool:
     token = request.cookies.get("session_token")
-    return token is not None and hmac.compare_digest(token, _SESSION_TOKEN)
+    return token is not None and token in _active_tokens
+
+
+def _is_authenticated_cookie(cookies: dict) -> bool:
+    """Check auth from a raw cookies dict (used by WebSocket)."""
+    token = cookies.get("session_token")
+    return token is not None and token in _active_tokens
+
+
+def _check_rate_limit(ip: str) -> bool:
+    """Return True if the IP is allowed to attempt login."""
+    import time
+
+    now = time.time()
+    attempts = _login_attempts.get(ip, [])
+    # Keep only attempts within the window
+    attempts = [t for t in attempts if now - t < _LOGIN_WINDOW_SECONDS]
+    _login_attempts[ip] = attempts
+    return len(attempts) < _MAX_LOGIN_ATTEMPTS
+
+
+def _record_failed_attempt(ip: str):
+    import time
+
+    _login_attempts.setdefault(ip, []).append(time.time())
 
 
 @app.middleware("http")
@@ -95,7 +121,7 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     if (
         path in _PUBLIC_PATHS
-        or path.startswith("/static")
+        or path.startswith("/static/")
         or request.headers.get("upgrade", "").lower() == "websocket"
     ):
         return await call_next(request)
@@ -111,13 +137,23 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/api/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
+    ip = request.client.host if request.client else "unknown"
+
+    if not _check_rate_limit(ip):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
     if not hmac.compare_digest(req.password, APP_PASSWORD):
+        _record_failed_attempt(ip)
         raise HTTPException(status_code=401, detail="Wrong password")
+
+    token = os.urandom(32).hex()
+    _active_tokens.add(token)
+
     response = JSONResponse(content={"ok": True})
     response.set_cookie(
         key="session_token",
-        value=_SESSION_TOKEN,
+        value=token,
         httponly=True,
         secure=True,
         samesite="lax",
@@ -240,8 +276,11 @@ async def upload_files(files: list[UploadFile] = File(...)):
                 detail=f"File {upload.filename} exceeds {MAX_UPLOAD_SIZE_MB}MB limit",
             )
 
-        # Sanitize filename (keep it simple)
-        filename = upload.filename or f"file_{len(saved_files)}"
+        # Sanitize filename — strip any directory components to prevent traversal
+        raw_name = upload.filename or f"file_{len(saved_files)}"
+        filename = Path(raw_name).name
+        if not filename or filename.startswith("."):
+            filename = f"file_{len(saved_files)}"
         dest = uploads_dir / filename
 
         dest.write_bytes(content)
@@ -605,6 +644,9 @@ async def download(job_id: str):
 @app.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
     """Accept WebSocket connection and keep alive for progress streaming."""
+    if not _is_authenticated_cookie(websocket.cookies):
+        await websocket.close(code=4401, reason="Not authenticated")
+        return
     await websocket.accept()
 
     # Register connection
