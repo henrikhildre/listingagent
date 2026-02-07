@@ -115,7 +115,7 @@ async def generate_with_images(
     model_name = model or REASONING_MODEL
 
     # Build content parts: text prompt followed by images
-    parts = [types.Part.from_text(prompt)]
+    parts = [types.Part.from_text(text=prompt)]
     for img_bytes, mime_type in image_parts:
         parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
 
@@ -157,7 +157,7 @@ async def generate_with_code_execution(
     model_name = model or REASONING_MODEL
 
     # Build content parts
-    parts = [types.Part.from_text(prompt)]
+    parts = [types.Part.from_text(text=prompt)]
     if image_parts:
         for img_bytes, mime_type in image_parts:
             parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
@@ -201,7 +201,7 @@ async def generate_with_search(
     model_name = model or BATCH_MODEL
 
     # Build content parts
-    parts = [types.Part.from_text(prompt)]
+    parts = [types.Part.from_text(text=prompt)]
     if image_parts:
         for img_bytes, mime_type in image_parts:
             parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
@@ -246,7 +246,7 @@ async def generate_structured(
     model_name = model or BATCH_MODEL
 
     # Build content parts
-    parts = [types.Part.from_text(prompt)]
+    parts = [types.Part.from_text(text=prompt)]
     if image_parts:
         for img_bytes, mime_type in image_parts:
             parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
