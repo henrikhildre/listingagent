@@ -372,8 +372,8 @@ async def discover(req: JobIdRequest):
 
     return {
         "job_id": req.job_id,
-        "file_summary": file_summary,
-        "analysis": analysis,
+        "response": analysis,
+        "categories": file_summary,
     }
 
 
