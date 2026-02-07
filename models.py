@@ -80,6 +80,11 @@ class ListingOutput(BaseModel):
     seo_keywords: list[str] = []
     confidence: Literal["high", "medium", "low"]
     notes_for_seller: str | None = None
+    # --- Enhanced fields for resellers ---
+    social_caption: str | None = None
+    hashtags: list[str] = []
+    item_specifics: dict[str, str] = {}
+    condition_description: str | None = None
 
 
 class BatchProgress(BaseModel):

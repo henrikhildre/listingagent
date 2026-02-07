@@ -20,6 +20,7 @@ const state = {
     recipe: null,
     testResults: [],
     batchResults: [],
+    fullListings: [],
     ws: null,
     uploadedFiles: [],
     executionStats: null,
@@ -986,8 +987,12 @@ function handleAutoRefineComplete(data) {
 
     if (data.reached_threshold) {
         // Good enough — show results and approve button
-        addMessage('assistant', buildRecipeTestSummary(state.testResults)
-            + `\n\nThe recipe reached **${data.avg_score}/100** average after ${data.iterations} iteration${data.iterations > 1 ? 's' : ''}. Looking good!`);
+        const summary = buildRecipeTestSummary(state.testResults);
+        if (summary.html) {
+            addMessage('assistant', summary.content + `<p style="margin-top:0.75rem">The recipe reached <strong>${data.avg_score}/100</strong> average after ${data.iterations} iteration${data.iterations > 1 ? 's' : ''}. Looking good!</p>`, { html: true });
+        } else {
+            addMessage('assistant', (summary.content || summary) + `\n\nThe recipe reached **${data.avg_score}/100** average after ${data.iterations} iteration${data.iterations > 1 ? 's' : ''}. Looking good!`);
+        }
     } else {
         // Stuck — show remaining issues, ask for user guidance
         let issueText = `After ${data.iterations} auto-refinement attempt${data.iterations > 1 ? 's' : ''}, the recipe is at **${data.avg_score}/100** average. Some issues remain:\n\n`;
@@ -1173,7 +1178,12 @@ async function testRecipe() {
         state.recipe = result.recipe;
         state.testResults = result.test_results || [];
 
-        addMessage('assistant', buildRecipeTestSummary(state.testResults));
+        const summary = buildRecipeTestSummary(state.testResults);
+        if (summary.html) {
+            addMessage('assistant', summary.content, { html: true });
+        } else {
+            addMessage('assistant', summary.content || summary);
+        }
         state.conversationHistory.push({
             role: 'assistant',
             content: 'Re-tested recipe on sample products.',
@@ -1405,14 +1415,43 @@ function handleBatchComplete(data) {
     const progressBar = document.getElementById('progress-bar');
     if (progressBar) progressBar.style.width = '100%';
 
+    // Update execution badge
+    const badge = document.getElementById('execution-badge');
+    if (badge) {
+        badge.textContent = 'Complete';
+        badge.className = 'badge badge-success';
+    }
+
     // Show stats
     showExecutionStats(data.report);
 
-    // Show download section
-    const downloadSection = document.getElementById('download-section');
-    if (downloadSection) downloadSection.classList.remove('hidden');
+    // Show download ZIP button
+    const downloadZipBtn = document.getElementById('download-zip-btn');
+    if (downloadZipBtn) downloadZipBtn.classList.remove('hidden');
+    if (downloadZipBtn) downloadZipBtn.classList.add('flex');
+
+    // Show export section
+    const exportSection = document.getElementById('export-section');
+    if (exportSection) exportSection.classList.remove('hidden');
+
+    // Load full listings data for the detail modal
+    loadListingsData();
 
     showToast('Batch execution complete!', 'success');
+}
+
+/**
+ * Load full listings data from the API for the detail modal.
+ */
+async function loadListingsData() {
+    if (!state.jobId) return;
+    try {
+        const data = await api(`/api/listings/${state.jobId}`);
+        state.fullListings = data.listings || [];
+    } catch (e) {
+        console.warn('Failed to load full listings data:', e);
+        state.fullListings = [];
+    }
 }
 
 /**
@@ -1456,7 +1495,28 @@ function addListingCard(data) {
     if (!grid) return;
 
     const card = document.createElement('div');
-    card.className = 'listing-card view-enter';
+    card.className = 'listing-card view-enter clickable';
+    card.dataset.productId = data.product_id;
+
+    // Make card clickable to open detail modal
+    card.addEventListener('click', () => {
+        const result = (state.fullListings || []).find(
+            l => l.product_id === data.product_id
+        );
+        if (result) {
+            openListingDetail(result);
+        } else {
+            showToast('Loading listing details...', 'info');
+            // Try to load and then open
+            loadListingsData().then(() => {
+                const r = (state.fullListings || []).find(
+                    l => l.product_id === data.product_id
+                );
+                if (r) openListingDetail(r);
+                else showToast('Could not load listing details.', 'error');
+            });
+        }
+    });
 
     const scoreColor = data.score >= 80
         ? 'text-green-600 bg-green-50'
@@ -1479,6 +1539,7 @@ function addListingCard(data) {
             </span>
         </div>
         <h3 class="listing-card-title text-sm">${escapeHtml(data.title || 'Untitled')}</h3>
+        <p class="text-xs text-slate-400 mt-2">Click to view full listing</p>
     `;
 
     grid.appendChild(card);
@@ -1852,7 +1913,7 @@ function renderTestResultsSection() {
 }
 
 // ============================================================================
-// Download
+// Download & Export
 // ============================================================================
 
 /**
@@ -1870,6 +1931,257 @@ function downloadResults() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+}
+
+/**
+ * Download a platform-specific export format.
+ */
+function downloadFormat(format) {
+    if (!state.jobId) {
+        showToast('No job ID available.', 'error');
+        return;
+    }
+
+    const link = document.createElement('a');
+    link.href = `/api/download/${state.jobId}/${format}`;
+    link.download = '';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    const labels = {
+        etsy: 'Etsy CSV',
+        ebay: 'eBay CSV',
+        shopify: 'Shopify CSV',
+        csv: 'Full CSV',
+        text: 'Copy-Paste Text',
+    };
+    showToast(`Downloading ${labels[format] || format}...`, 'success');
+}
+
+/**
+ * Copy text to clipboard and show feedback on the button.
+ */
+function copyToClipboard(text, btnEl) {
+    navigator.clipboard.writeText(text).then(() => {
+        if (btnEl) {
+            const original = btnEl.innerHTML;
+            btnEl.classList.add('copied');
+            btnEl.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Copied`;
+            setTimeout(() => {
+                btnEl.classList.remove('copied');
+                btnEl.innerHTML = original;
+            }, 1500);
+        }
+    }).catch(() => {
+        showToast('Copy failed — try selecting the text manually.', 'error');
+    });
+}
+
+// ============================================================================
+// Listing Detail Modal
+// ============================================================================
+
+/**
+ * Open a detailed view of a single listing with copy buttons for each field.
+ */
+function openListingDetail(result) {
+    const listing = result.listing || {};
+    const esc = s => escapeHtml(String(s || ''));
+
+    // Build specifics grid
+    const specifics = listing.item_specifics || {};
+    let specificsHtml = '';
+    if (Object.keys(specifics).length > 0) {
+        specificsHtml = `
+            <div class="listing-modal-section">
+                <div class="listing-modal-section-title">
+                    <span>Item Specifics</span>
+                    <button class="copy-btn" onclick="copyToClipboard(\`${Object.entries(specifics).map(([k,v]) => `${k}: ${v}`).join('\\n')}\`, this)">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+                        Copy
+                    </button>
+                </div>
+                <div class="specifics-grid">
+                    ${Object.entries(specifics).map(([k, v]) => `
+                        <div class="specifics-item">
+                            <div class="specifics-item-key">${esc(k)}</div>
+                            <div class="specifics-item-value">${esc(v)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // Build hashtags
+    const hashtags = listing.hashtags || [];
+    let hashtagsHtml = '';
+    if (hashtags.length > 0) {
+        const hashtagStr = hashtags.map(h => `#${h}`).join(' ');
+        hashtagsHtml = `
+            <div class="listing-modal-section">
+                <div class="listing-modal-section-title">
+                    <span>Hashtags (${hashtags.length})</span>
+                    <button class="copy-btn" onclick="copyToClipboard('${hashtagStr.replace(/'/g, "\\'")}', this)">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+                        Copy
+                    </button>
+                </div>
+                <div class="flex flex-wrap gap-1">
+                    ${hashtags.map(h => `<span class="hashtag-pill">#${esc(h)}</span>`).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // Build social caption
+    const caption = listing.social_caption || '';
+    let captionHtml = '';
+    if (caption) {
+        captionHtml = `
+            <div class="listing-modal-section">
+                <div class="listing-modal-section-title">
+                    <span>Social Media Caption</span>
+                    <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-caption-text').textContent, this)">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+                        Copy
+                    </button>
+                </div>
+                <div class="listing-modal-section-content" id="modal-caption-text">${esc(caption)}</div>
+            </div>
+        `;
+    }
+
+    // Build condition
+    const condition = listing.condition_description || '';
+    let conditionHtml = '';
+    if (condition) {
+        conditionHtml = `
+            <div class="listing-modal-section">
+                <div class="listing-modal-section-title">
+                    <span>Condition</span>
+                    <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-condition-text').textContent, this)">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+                        Copy
+                    </button>
+                </div>
+                <div class="listing-modal-section-content" id="modal-condition-text">${esc(condition)}</div>
+            </div>
+        `;
+    }
+
+    // Tags section
+    const tags = listing.tags || [];
+    const tagsStr = tags.join(', ');
+
+    // Price and confidence
+    const price = listing.suggested_price;
+    const confidence = listing.confidence;
+    const priceRationale = listing.pricing_rationale || '';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'listing-modal-overlay';
+    overlay.id = 'listing-modal-overlay';
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeListingDetail();
+    });
+
+    overlay.innerHTML = `
+        <div class="listing-modal">
+            <div class="listing-modal-header">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">${esc(result.sku || result.product_id)}</h2>
+                    <div class="flex items-center gap-2 mt-1">
+                        ${price ? `<span class="text-lg font-bold text-blue-600">$${price}</span>` : ''}
+                        ${confidence ? `<span class="badge badge-${confidence === 'high' ? 'success' : confidence === 'medium' ? 'warning' : 'error'} text-xs">${confidence}</span>` : ''}
+                    </div>
+                </div>
+                <button onclick="closeListingDetail()" class="p-2 hover:bg-slate-100 rounded-lg transition">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="listing-modal-body">
+                <!-- Title -->
+                <div class="listing-modal-section">
+                    <div class="listing-modal-section-title">
+                        <span>Title</span>
+                        <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-title-text').textContent, this)">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="listing-modal-section-content font-semibold" id="modal-title-text">${esc(listing.title)}</div>
+                </div>
+
+                <!-- Description -->
+                <div class="listing-modal-section">
+                    <div class="listing-modal-section-title">
+                        <span>Description</span>
+                        <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-desc-text').textContent, this)">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="listing-modal-section-content" id="modal-desc-text">${esc(listing.description)}</div>
+                </div>
+
+                <!-- Tags -->
+                ${tags.length > 0 ? `
+                <div class="listing-modal-section">
+                    <div class="listing-modal-section-title">
+                        <span>Tags (${tags.length})</span>
+                        <button class="copy-btn" onclick="copyToClipboard('${tagsStr.replace(/'/g, "\\'")}', this)">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                        ${tags.map(t => `<span class="text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-600 border border-slate-200">${esc(t)}</span>`).join('')}
+                    </div>
+                </div>
+                ` : ''}
+
+                ${conditionHtml}
+                ${specificsHtml}
+                ${captionHtml}
+                ${hashtagsHtml}
+
+                ${priceRationale ? `
+                <div class="listing-modal-section">
+                    <div class="listing-modal-section-title"><span>Pricing Rationale</span></div>
+                    <div class="listing-modal-section-content text-sm text-slate-500">${esc(priceRationale)}</div>
+                </div>
+                ` : ''}
+
+                ${listing.notes_for_seller ? `
+                <div class="listing-modal-section">
+                    <div class="listing-modal-section-title"><span>Notes for Seller</span></div>
+                    <div class="listing-modal-section-content text-sm text-amber-700 bg-amber-50 border-amber-200">${esc(listing.notes_for_seller)}</div>
+                </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Close on Escape key
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeListingDetail();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+}
+
+/**
+ * Close the listing detail modal.
+ */
+function closeListingDetail() {
+    const overlay = document.getElementById('listing-modal-overlay');
+    if (overlay) overlay.remove();
 }
 
 // ============================================================================

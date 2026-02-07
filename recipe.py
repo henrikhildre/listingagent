@@ -44,6 +44,13 @@ DEFAULT_OUTPUT_SCHEMA = {
         "seo_keywords": {"type": "array", "items": {"type": "string"}},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "notes_for_seller": {"type": "string"},
+        "social_caption": {"type": "string"},
+        "hashtags": {"type": "array", "items": {"type": "string"}, "maxItems": 30},
+        "item_specifics": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+        },
+        "condition_description": {"type": "string"},
     },
     "required": ["title", "description", "tags", "suggested_price", "confidence"],
 }
@@ -225,6 +232,19 @@ Use {{curly_brace_variables}} for product-specific data. Available variables:
 The prompt should be detailed, covering title format, description style,
 tag strategy, pricing approach, and any platform-specific requirements.
 Tailor it specifically to this seller's voice and platform.
+
+IMPORTANT — also instruct the model to generate these additional fields:
+- social_caption: A short, engaging social media caption (Instagram/TikTok style)
+  for promoting this product. Should be punchy, conversational, and include a
+  call-to-action (e.g. "Link in bio", "DM to purchase"). 1-3 sentences max.
+- hashtags: 15-30 relevant hashtags for social media (without the # symbol).
+  Mix broad reach tags (e.g. "vintage", "homedecor") with niche specific ones.
+- item_specifics: Key-value pairs of structured product attributes that
+  platforms like eBay/Etsy require (e.g. "Brand", "Color", "Material",
+  "Era", "Style", "Size", "Pattern"). Extract from the product data and image.
+- condition_description: A brief, honest condition assessment (e.g.
+  "Excellent vintage condition with minor patina consistent with age.
+  No chips, cracks, or repairs.").
 
 Use the specific field names above — reference them by name when they carry
 important product attributes (e.g. "Highlight that this is made from
