@@ -26,19 +26,23 @@ class FileCategory(BaseModel):
 
 
 class Product(BaseModel):
+    """Minimal required fields — all other fields are discovered per-job.
+
+    The extraction pipeline produces dicts with dynamic keys (e.g. sku,
+    name, material, color) depending on what the spreadsheet contains.
+    Only id, image_files, and source are guaranteed.
+    """
     id: str
-    sku: str | None = None
-    name: str | None = None
-    category: str | None = None
-    price: float | None = None
     image_files: list[str] = []
-    metadata: dict = {}
     source: str
+
+    model_config = {"extra": "allow"}
 
 
 class DataModel(BaseModel):
     sources: dict
-    products: list[Product]
+    fields_discovered: list[str] = []
+    products: list[dict]
     unmatched_images: list[dict] = []
     matching_strategy: str
 

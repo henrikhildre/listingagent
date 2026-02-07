@@ -224,6 +224,60 @@ async def generate_with_code_execution(
 
 
 @with_retry
+async def generate_code_execution_with_parts(
+    prompt: str,
+    csv_data: str | None = None,
+    image_parts: Optional[list] = None,
+    *,
+    model: Optional[str] = None,
+    thinking_level: str = "high",
+) -> tuple[str, str | None]:
+    """Code execution that also returns the last generated script.
+
+    Attaches CSV data as an inline text/csv part so the sandbox can read it.
+
+    Returns:
+        (text_response, last_executable_code_or_None)
+    """
+    model_name = model or REASONING_MODEL
+
+    parts = [types.Part.from_text(text=prompt)]
+
+    if csv_data:
+        parts.append(
+            types.Part.from_bytes(data=csv_data.encode("utf-8"), mime_type="text/csv")
+        )
+
+    if image_parts:
+        for img_bytes, mime_type in image_parts:
+            parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
+
+    config = types.GenerateContentConfig(
+        tools=[CODE_EXECUTION_TOOL],
+        thinking_config=types.ThinkingConfig(
+            thinking_level=_valid_thinking_level(thinking_level)
+        ),
+    )
+
+    response = await _ensure_client().aio.models.generate_content(
+        model=model_name, contents=parts, config=config
+    )
+
+    # Walk response parts to extract the last executable_code block
+    script = None
+    text_parts = []
+    if response.candidates and response.candidates[0].content:
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "executable_code") and part.executable_code:
+                script = part.executable_code.code
+            if hasattr(part, "text") and part.text:
+                text_parts.append(part.text)
+
+    text_response = "\n".join(text_parts) if text_parts else (response.text or "")
+    return text_response, script
+
+
+@with_retry
 async def generate_with_search(
     prompt: str,
     image_parts: Optional[list] = None,

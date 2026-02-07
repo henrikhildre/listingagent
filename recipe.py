@@ -145,24 +145,60 @@ async def draft_recipe(
 
     # Build a summary of available product fields from the data model
     sample_products = data_model.get("products", [])[:3]
-    available_fields = set()
-    for p in data_model.get("products", []):
-        available_fields.add("product_name")
-        available_fields.add("product_id")
-        if p.get("sku"):
-            available_fields.add("sku")
-        if p.get("category"):
-            available_fields.add("category")
-        if p.get("price"):
-            available_fields.add("wholesale_price")
-        for key in p.get("metadata", {}):
-            available_fields.add(key)
-        if p.get("image_files"):
-            available_fields.add("product_image")
 
+    fields_discovered = data_model.get("fields_discovered", [])
+
+    available_fields = {"product_id", "product_image"} | set(fields_discovered)
     fields_list = ", ".join(sorted(available_fields))
 
     sample_data_str = json.dumps(sample_products, indent=2, default=str)
+
+    # Build per-field documentation with stats so the LLM can write
+    # better, more specific prompts and validation code
+    field_stats = data_model.get("field_stats", {})
+
+    variable_docs = [
+        "- {{style_profile_summary}} -- will be filled with the seller style info",
+        "- {{product_id}} -- product identifier",
+    ]
+    for field in sorted(fields_discovered):
+        stats = field_stats.get(field, {})
+        desc = f"- {{{{{field}}}}}"
+        if stats.get("type") == "numeric":
+            desc += f" -- numeric, range {stats['min']}–{stats['max']}"
+        elif stats.get("type") == "text":
+            samples = stats.get("sample", [])
+            if stats.get("unique_count", 0) <= 8 and samples:
+                desc += f" -- values: {', '.join(samples)}"
+            elif samples:
+                desc += f" -- {stats['unique_count']} unique values, e.g. {', '.join(samples[:3])}"
+        variable_docs.append(desc)
+
+    variable_docs.extend([
+        "- {{title_format}} -- from style profile",
+        "- {{description_structure}} -- from style profile",
+        "- {{pricing_strategy}} -- from style profile",
+        "- {{platform}} -- target platform",
+        "- {{always_mention_list}} -- mandatory mentions",
+        "- [The product photo will be attached separately]",
+    ])
+    variables_block = "\n".join(variable_docs)
+
+    # Build a field stats summary the LLM can use for validation ranges
+    stats_summary_parts = []
+    for field in sorted(fields_discovered):
+        stats = field_stats.get(field, {})
+        if stats.get("type") == "numeric":
+            stats_summary_parts.append(
+                f"- {field}: numeric, min={stats['min']}, max={stats['max']}"
+            )
+        elif stats.get("type") == "text":
+            fc = data_model.get("quality_report", {}).get("field_completeness", {}).get(field, {})
+            pct = fc.get("pct", "?")
+            stats_summary_parts.append(
+                f"- {field}: text, {stats.get('unique_count', '?')} unique values, {pct}% filled"
+            )
+    stats_block = "\n".join(stats_summary_parts) if stats_summary_parts else "No field statistics available."
 
     prompt = f"""You are building a product listing recipe for a marketplace seller.
 
@@ -171,6 +207,9 @@ async def draft_recipe(
 
 ## Available Product Data Fields
 {fields_list}
+
+## Field Statistics
+{stats_block}
 
 ## Sample Products (first 3)
 {sample_data_str}
@@ -181,23 +220,15 @@ Create a recipe with THREE artifacts:
 ### 1. Prompt Template
 Write the exact prompt that will be sent to an AI model for EACH product.
 Use {{curly_brace_variables}} for product-specific data. Available variables:
-- {{style_profile_summary}} -- will be filled with the seller style info
-- {{product_name}} -- product name
-- {{product_id}} -- product identifier
-- {{sku}} -- SKU if available
-- {{category}} -- category if available
-- {{wholesale_price}} -- price if available
-- {{metadata}} -- any additional metadata as key: value pairs
-- {{title_format}} -- from style profile
-- {{description_structure}} -- from style profile
-- {{pricing_strategy}} -- from style profile
-- {{platform}} -- target platform
-- {{always_mention_list}} -- mandatory mentions
-- [The product photo will be attached separately]
+{variables_block}
 
 The prompt should be detailed, covering title format, description style,
 tag strategy, pricing approach, and any platform-specific requirements.
 Tailor it specifically to this seller's voice and platform.
+
+Use the specific field names above — reference them by name when they carry
+important product attributes (e.g. "Highlight that this is made from
+{{{{material}}}}" rather than vague instructions).
 
 ### 2. Output Schema
 A JSON schema for the structured output. Use this default as a starting
@@ -213,6 +244,8 @@ that checks the quality of a generated listing. It should return a dict with:
 
 Tailor the checks to this seller's specific requirements (word counts,
 tag counts, mandatory mentions, price ranges, etc.).
+Use the field statistics above to set realistic validation thresholds
+(e.g. if prices range 5–150, flag suggested_price outside that range).
 
 ## Response Format
 Respond with EXACTLY this JSON structure (no markdown fencing):
@@ -471,27 +504,15 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         else "No style profile provided"
     )
 
-    # Build metadata string
-    metadata = product.get("metadata", {})
-    metadata_str = (
-        ", ".join(f"{k}: {v}" for k, v in metadata.items()) if metadata else "None"
-    )
-
     # Build always-mention list
     always_mention = style_profile.get("always_mention", [])
     always_mention_str = (
         "\n".join(f"- {item}" for item in always_mention) if always_mention else "None"
     )
 
-    # Replacement mapping
+    # Style profile replacements
     replacements = {
         "{style_profile_summary}": style_summary,
-        "{product_name}": product.get("name") or "N/A",
-        "{product_id}": product.get("id") or "N/A",
-        "{sku}": product.get("sku") or "N/A",
-        "{category}": product.get("category") or "N/A",
-        "{wholesale_price}": str(product.get("price") or "N/A"),
-        "{metadata}": metadata_str,
         "{title_format}": style_profile.get("title_format", "N/A"),
         "{description_structure}": style_profile.get("description_structure", "N/A"),
         "{pricing_strategy}": style_profile.get("pricing_strategy", "N/A"),
@@ -502,6 +523,18 @@ def fill_template(template: str, product: dict, style_profile: dict) -> str:
         ),
         "{tags_style}": style_profile.get("tags_style", "mix of broad and specific"),
     }
+
+    # Dynamic product field replacements — every key on the product dict
+    # becomes a {field_name} placeholder the recipe template can use
+    for key, value in product.items():
+        placeholder = f"{{{key}}}"
+        if placeholder not in replacements:
+            if value is None or value == "":
+                replacements[placeholder] = "N/A"
+            elif isinstance(value, list):
+                replacements[placeholder] = ", ".join(str(v) for v in value)
+            else:
+                replacements[placeholder] = str(value)
 
     result = template
     for placeholder, value in replacements.items():
