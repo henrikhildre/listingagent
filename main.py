@@ -25,6 +25,7 @@ import hmac
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -303,6 +304,47 @@ async def upload_files(files: list[UploadFile] = File(...)):
         dest.write_bytes(content)
         saved_files.append(filename)
         logger.info("Saved upload %s (%0.1f MB) for job %s", filename, size_mb, job_id)
+
+    return {
+        "job_id": job_id,
+        "files": saved_files,
+        "file_count": len(saved_files),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 1b. POST /api/load-demo
+# ---------------------------------------------------------------------------
+
+DEMO_DATA_DIR = Path(__file__).parent / "demo_data"
+
+
+@app.post("/api/load-demo")
+async def load_demo():
+    """Load bundled demo dataset into a new job. Returns same shape as /api/upload."""
+    if not DEMO_DATA_DIR.exists():
+        raise HTTPException(status_code=404, detail="Demo data not found on server.")
+
+    job_id = str(uuid4())
+    job_path = create_job_directory(job_id)
+    uploads_dir = job_path / "uploads"
+
+    saved_files = []
+
+    # Copy spreadsheet
+    for f in DEMO_DATA_DIR.glob("*.xlsx"):
+        shutil.copy2(f, uploads_dir / f.name)
+        saved_files.append(f.name)
+
+    # Copy images
+    images_dir = DEMO_DATA_DIR / "images"
+    if images_dir.exists():
+        for f in sorted(images_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+                shutil.copy2(f, uploads_dir / f.name)
+                saved_files.append(f.name)
+
+    logger.info("Loaded demo data for job %s: %d files", job_id, len(saved_files))
 
     return {
         "job_id": job_id,

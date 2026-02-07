@@ -386,6 +386,25 @@ async function uploadFiles() {
 }
 
 /**
+ * Load demo dataset and start discovery.
+ */
+async function loadDemo() {
+    showLoading('Loading sample data...');
+
+    try {
+        const result = await api('/api/load-demo', { method: 'POST' });
+
+        state.jobId = result.job_id;
+        showToast(`Demo loaded: ${result.file_count} files.`, 'success');
+
+        await startDiscovery();
+    } catch (error) {
+        hideLoading();
+        showToast('Failed to load demo: ' + error.message, 'error');
+    }
+}
+
+/**
  * Trigger Phase 1 discovery.
  */
 async function startDiscovery() {
@@ -1573,6 +1592,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             uploadFiles();
         });
     }
+
+    // Demo button: load sample data and start discovery
+    document.getElementById('demo-btn')?.addEventListener('click', loadDemo);
 
     // Send button in chat
     const sendBtn = document.getElementById('send-btn');
