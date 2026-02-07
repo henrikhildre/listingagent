@@ -1,6 +1,6 @@
 # ListingAgent
 
-AI-powered product listing generator for ecommerce stores and marketplace sellers. ListingAgent automates the creation of product listings at scale by learning your brand voice and style, then applying it consistently across your entire product catalog.
+AI-powered product listing generator for marketplace sellers. ListingAgent automates the creation of product listings at scale by learning your brand voice and style, then applying it consistently across your entire product catalog.
 
 ## How It Works
 
@@ -12,8 +12,8 @@ Upload your product data (spreadsheets, images, CSVs) and let AI analyze the str
 **2. Interview**
 Have a conversation with the AI to define your brand voice, style preferences, pricing strategy, and unique selling points. The AI learns what makes your listings distinctive.
 
-**3. Recipe Building**
-Collaboratively design a processing "recipe" that transforms raw product data into polished listings. Test the recipe on sample products, refine prompts, and iterate until results are perfect.
+**3. Recipe Building & Auto-Refine**
+The AI drafts a processing "recipe" (prompt template + output schema + validation rules), then tests it on sample products. An auto-refine loop iterates automatically — testing, evaluating with a hybrid scoring system, and improving the recipe until quality targets are met. You approve when satisfied.
 
 **4. Batch Execution**
 Apply your finalized recipe to all products at once. The AI generates complete, consistent listings across your entire catalog with real-time progress tracking and downloadable results.
@@ -23,12 +23,12 @@ Apply your finalized recipe to all products at once. The AI generates complete, 
 ```
 Frontend (static/index.html + app.js + Tailwind CDN)
     │
-    ├── REST + WebSocket
+    ├── REST + SSE + WebSocket
     │
 FastAPI Backend (Python 3.12)
     ├── discovery.py     — Phase 1: Data structure analysis
     ├── calibration.py   — Phase 2: Brand voice interview
-    ├── recipe.py        — Phase 3: Recipe design and testing
+    ├── recipe.py        — Phase 3: Recipe design, testing, and auto-refine
     ├── executor.py      — Phase 4: Batch execution engine
     ├── gemini_client.py — Gemini API wrapper and utilities
     ├── models.py        — Pydantic data models
@@ -39,56 +39,22 @@ FastAPI Backend (Python 3.12)
 
 ## Quick Start
 
-### Local Development
-
 ```bash
 # Clone the repository
 git clone <repo-url>
 cd listingagent
 
 # Install dependencies
-pip install -r requirements.txt
+uv venv && uv pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
 # Edit .env and add your GEMINI_API_KEY from https://aistudio.google.com
 
 # Run the development server
-uvicorn main:app --reload --port 8080
+.venv/bin/uvicorn main:app --reload --port 8080
 
 # Open your browser to http://localhost:8080
-```
-
-### Docker
-
-```bash
-# Build the image
-docker build -t listingagent .
-
-# Run the container
-docker run -p 8080:8080 -e GEMINI_API_KEY=your-key listingagent
-
-# Access at http://localhost:8080
-```
-
-### Production Deployment (DigitalOcean)
-
-```bash
-# Build and push to Docker Hub
-docker build -t yourusername/listingagent .
-docker push yourusername/listingagent
-
-# SSH into your droplet
-ssh root@your-droplet-ip
-
-# Pull and run
-docker pull yourusername/listingagent
-docker run -d --restart unless-stopped -p 80:8080 \
-  -e GEMINI_API_KEY=your-key \
-  --name listingagent yourusername/listingagent
-
-# Optional: Use Caddy for automatic HTTPS
-# Configure a Caddyfile and run: caddy run
 ```
 
 ## Environment Variables
@@ -96,6 +62,7 @@ docker run -d --restart unless-stopped -p 80:8080 \
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GEMINI_API_KEY` | Yes | — | Google AI Studio API key from https://aistudio.google.com |
+| `APP_PASSWORD` | No | `listingagent` | Shared login password for the web UI |
 | `REASONING_MODEL` | No | `gemini-3-pro-preview` | Model for reasoning-heavy tasks (discovery, interview, recipe building) |
 | `BATCH_MODEL` | No | `gemini-3-flash-preview` | Model for batch execution (faster, cost-effective) |
 | `MAX_BATCH_SIZE` | No | `50` | Maximum number of products to process in a single batch |
@@ -107,40 +74,41 @@ docker run -d --restart unless-stopped -p 80:8080 \
 - **Frontend**: Vanilla JavaScript + Tailwind CSS (CDN, no build step)
 - **AI**: Google Gemini API (via `google-genai` SDK)
 - **Data Processing**: pandas, openpyxl, Pillow, python-multipart
-- **Real-time**: WebSockets for progress streaming
+- **Real-time**: WebSockets for batch progress, SSE for auto-refine streaming
 - **Async**: aiofiles for async file operations
 
 ## API Endpoints
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
+| POST | `/api/login` | Authenticate with shared password |
+| GET | `/api/auth-check` | Validate session cookie |
 | POST | `/api/upload` | Upload and categorize files |
+| POST | `/api/load-demo` | Load built-in demo dataset |
 | POST | `/api/discover` | Analyze data structure (Phase 1) |
+| POST | `/api/build-data-model` | Finalize data model from discovery |
 | POST | `/api/chat` | Conduct brand voice interview (Phase 2) |
 | POST | `/api/test-recipe` | Test recipe on sample products (Phase 3) |
+| POST | `/api/auto-refine` | SSE auto-refine loop: draft, test, iterate (Phase 3) |
 | POST | `/api/approve-recipe` | Finalize and lock recipe |
 | POST | `/api/execute` | Start batch execution (Phase 4) |
-| WS | `/ws/{job_id}` | Real-time progress streaming |
+| WS | `/ws/{job_id}` | Real-time batch progress streaming |
 | GET | `/api/status/{id}` | Job status and statistics |
 | GET | `/api/download/{id}` | Download results as ZIP |
 
 ## Key Design Decisions
 
+- **Hybrid Evaluation System**: Quality scoring combines two layers — fast, free code-based checks (title length, tag count, price, mandatory mentions) and an LLM judge (5 parallel Flash calls evaluating brand voice, completeness, tag relevance, persuasiveness, and consistency). Each judge criterion uses chain-of-thought reasoning before a binary pass/fail verdict.
+- **Auto-Refine Loop**: The `/api/auto-refine` endpoint streams progress via SSE as it drafts, tests, evaluates, and iterates the recipe automatically until quality targets are met.
 - **Thinking Levels**: Uses high-level reasoning (Pro model) for discovery, interview, and recipe building. Switches to low-level reasoning (Flash model) for fast batch execution. Escalates to high on retry failures.
 - **Tool Constraints**: `code_execution` and `web_search` cannot be used together in the same API call. Code execution is used during recipe testing; validation during batch execution uses local `exec()` for reliability.
-- **Rate Limiting**: Respects Gemini free tier limits (60 req/min) with 1-second delays between batch items. Recommended demo size: 15-20 products.
+- **Rate Limiting**: Respects Gemini free tier limits (60 req/min) with exponential backoff retry. Recommended demo size: 15-20 products.
 - **State Management**: Frontend state machine: UPLOAD → DISCOVER → INTERVIEW → RECIPE_TEST → EXECUTING → RESULTS. Chat UI is shared across Phases 1-3 with an evolving context panel.
 
-## Development
+## Deployment
 
-For detailed specifications, architecture decisions, and module-level behavior, see [`plan.md`](./plan.md).
-
-For Claude Code integration notes, see [`CLAUDE.md`](./CLAUDE.md).
+Runs on a DigitalOcean droplet as a systemd service.
 
 ## Built For
 
-Gemini API Developer Competition 2025
-
-## License
-
-MIT
+[Gemini 3 Hackathon](https://gemini3.devpost.com/)
