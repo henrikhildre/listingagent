@@ -165,43 +165,15 @@ function getFileIcon(filename) {
  */
 function formatMessage(text) {
     if (!text) return '';
-
-    // Escape HTML first
-    let html = text
+    if (typeof marked !== 'undefined') {
+        return marked.parse(text);
+    }
+    // Fallback: escape HTML and add line breaks
+    return text
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-    // Code blocks (``` ... ```)
-    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-        return `<pre><code>${code.trim()}</code></pre>`;
-    });
-
-    // Inline code (`...`)
-    html = html.replace(/`([^`]+)`/g, '<code class="bg-slate-100 px-1.5 py-0.5 rounded text-sm">$1</code>');
-
-    // Bold (**...**)
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-    // Italic (*...*)
-    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-    // Bullet lists (lines starting with - )
-    html = html.replace(/^- (.+)$/gm, '<li class="ml-4">$1</li>');
-    // Wrap consecutive <li> in <ul>
-    html = html.replace(/((?:<li[^>]*>.*<\/li>\n?)+)/g, '<ul class="list-disc space-y-1 my-2">$1</ul>');
-
-    // Numbered lists (lines starting with N. )
-    html = html.replace(/^\d+\.\s+(.+)$/gm, '<li class="ml-4">$1</li>');
-
-    // Line breaks for remaining newlines (but not inside pre blocks)
-    const parts = html.split(/(<pre>[\s\S]*?<\/pre>)/);
-    html = parts.map((part, i) => {
-        if (part.startsWith('<pre>')) return part;
-        return part.replace(/\n/g, '<br>');
-    }).join('');
-
-    return html;
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>');
 }
 
 // ============================================================================
@@ -635,14 +607,14 @@ async function handleInterviewChat(message) {
         content: result.response,
     });
 
-    // Check if the profile is ready
-    if (result.phase === 'profile_ready' && result.style_profile) {
-        state.styleProfile = result.style_profile;
-        updateContextPanel();
+    // Check if the profile is ready or backend says to start recipe
+    if (result.phase === 'profile_ready' || result.phase === 'start_recipe') {
+        if (result.style_profile) {
+            state.styleProfile = result.style_profile;
+            updateContextPanel();
+        }
 
         addSystemMessage('Style profile complete. Building your listing recipe...');
-
-        // Auto-transition to recipe building
         await startRecipeBuilding();
     } else if (result.style_profile) {
         // Partial profile update

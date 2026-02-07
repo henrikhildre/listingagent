@@ -426,10 +426,10 @@ async def chat(req: ChatRequest):
         if phase in ("building_recipe", "testing"):
             current_recipe = _load_json_artifact(job_path, "recipe.json")
             if not current_recipe:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No recipe found. Call /api/test-recipe first to draft one.",
-                )
+                return {
+                    "response": "Your style profile is ready! Let me build a listing recipe now.",
+                    "phase": "start_recipe",
+                }
 
             test_results = current_recipe.get("test_results", [])
             updated_recipe = await recipe_module.refine_recipe(
