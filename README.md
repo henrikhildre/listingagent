@@ -1,6 +1,6 @@
 # ListingAgent
 
-AI-powered product listing generator for marketplace sellers. ListingAgent automates the creation of product listings at scale by learning your brand voice and style, then applying it consistently across your entire product catalog.
+AI-powered product listing generator for ecommerce stores and marketplace sellers. ListingAgent automates the creation of product listings at scale by learning your brand voice and style, then applying it consistently across your entire product catalog.
 
 ## How It Works
 
