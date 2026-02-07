@@ -119,6 +119,7 @@ async def login(req: LoginRequest):
         key="session_token",
         value=_SESSION_TOKEN,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=60 * 60 * 24 * 30,  # 30 days
     )
