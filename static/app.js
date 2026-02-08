@@ -1214,10 +1214,14 @@ async function startRecipeBuilding() {
             if (event.type === 'progress') {
                 updateInlineProgress(progress, event.data.text);
             } else if (event.type === 'score') {
-                const { attempt, avg, all_passed } = event.data;
-                const status = all_passed ? 'Looking good!' : 'Still refining...';
+                const { attempt, all_passed, details } = event.data;
+                const total = details ? details.length : 0;
+                const passed = details ? details.filter(d => d.passed).length : 0;
+                const status = all_passed
+                    ? 'All listings passed!'
+                    : `${passed} of ${total} passed — still refining...`;
                 updateInlineProgress(progress,
-                    `Round ${attempt}: scored ${avg}/100 — ${status}`);
+                    `Round ${attempt}: ${status}`);
             } else if (event.type === 'complete') {
                 removeInlineProgress(progress);
                 handleAutoRefineComplete(event.data);
@@ -1248,17 +1252,20 @@ function handleAutoRefineComplete(data) {
     const iters = data.iterations;
     const iterLabel = `${iters} round${iters > 1 ? 's' : ''}`;
 
+    const passedCount = (data.test_results || []).filter(tr => tr.validation?.passed).length;
+    const totalCount = (data.test_results || []).length;
+
     if (data.reached_threshold) {
-        const footer = `<p style="margin-top:0.75rem">The recipe scored <strong>${data.avg_score}/100</strong> after ${iterLabel} of testing. The listings look great!</p>`;
+        const footer = `<p style="margin-top:0.75rem">All <strong>${totalCount} test listings passed</strong> after ${iterLabel} of testing. The listings look great!</p>`;
         addMessage('assistant', (summary.html ? summary.content : '') + footer, { html: true });
     } else {
-        const footer = `<p style="margin-top:0.75rem">After ${iterLabel} the recipe is at <strong>${data.avg_score}/100</strong>. Some issues remain (listed above). You can give me specific feedback to improve, or approve as-is.</p>`;
+        const footer = `<p style="margin-top:0.75rem">After ${iterLabel}, <strong>${passedCount} of ${totalCount}</strong> test listings passed. Some issues remain (listed above). You can give me specific feedback to improve, or approve as-is.</p>`;
         addMessage('assistant', (summary.html ? summary.content : '') + footer, { html: true });
     }
 
     state.conversationHistory.push({
         role: 'assistant',
-        content: `Recipe tested (avg ${data.avg_score}/100, ${data.iterations} iterations).`,
+        content: `Recipe tested (${passedCount}/${totalCount} passed, ${data.iterations} iterations).`,
     });
 
     setChatInputEnabled(true);
@@ -1360,8 +1367,8 @@ function buildRecipeTestSummary(testResults) {
         cards += card;
     });
 
-    const avgScore = Math.round(testResults.reduce((sum, tr) => sum + (tr.validation?.score || 0), 0) / testResults.length);
-    cards += `<div class="test-result-avg">Average score: <strong>${avgScore}/100</strong></div>`;
+    const passedCount = testResults.filter(tr => tr.validation?.passed).length;
+    cards += `<div class="test-result-avg"><strong>${passedCount} of ${testResults.length}</strong> listings passed</div>`;
     cards += `<p style="margin-top:0.5rem;color:var(--color-text-secondary);font-size:0.85rem">You can approve the recipe or tell me what to change.</p>`;
 
     return { html: true, content: cards };
@@ -1681,12 +1688,12 @@ function showExecutionStats(report) {
                 <div class="text-sm text-slate-500">Failed</div>
             </div>
             <div class="bg-white rounded-lg border border-slate-200 p-4 text-center">
-                <div class="text-2xl font-bold text-blue-500">${report.avg_score}</div>
-                <div class="text-sm text-slate-500">Avg Score</div>
+                <div class="text-2xl font-bold text-blue-500">${report.retried}</div>
+                <div class="text-sm text-slate-500">Retried</div>
             </div>
         </div>
         <div class="mt-3 text-sm text-slate-500 text-center">
-            ${report.retried} retried | ${report.elapsed_seconds}s elapsed
+            Completed in ${report.elapsed_seconds}s
         </div>
     `;
 }
@@ -1722,13 +1729,11 @@ function addListingCard(data) {
         }
     });
 
-    const scoreColor = data.score >= 80
-        ? 'text-green-600 bg-green-50'
-        : data.score >= 50
-            ? 'text-amber-600 bg-amber-50'
-            : 'text-red-600 bg-red-50';
+    const isOk = data.status === 'ok';
+    const cardStatusColor = isOk ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50';
+    const cardStatusLabel = isOk ? 'Checked — OK' : 'Needs work';
 
-    const statusIcon = data.status === 'ok'
+    const statusIcon = isOk
         ? '<svg class="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
         : '<svg class="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>';
 
@@ -1738,8 +1743,8 @@ function addListingCard(data) {
                 ${statusIcon}
                 <span class="text-xs text-slate-400 font-mono">${data.product_id}</span>
             </div>
-            <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${scoreColor}">
-                ${data.score !== null && data.score !== undefined ? data.score + '/100' : '--'}
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${cardStatusColor}">
+                ${cardStatusLabel}
             </span>
         </div>
         <h3 class="listing-card-title text-sm">${escapeHtml(data.title || 'Untitled')}</h3>
@@ -1777,8 +1782,8 @@ function copyButtonHtml(copyExpr) {
  */
 function scoreBadgeHtml(score, passed) {
     const color = passed ? '#059669' : '#d97706';
-    const label = passed ? 'Passed' : 'Needs work';
-    return `<span class="test-result-score" style="background:${color}">${score}/100 &middot; ${label}</span>`;
+    const label = passed ? 'Checked — OK' : 'Needs work';
+    return `<span class="test-result-score" style="background:${color}">${label}</span>`;
 }
 
 /**
@@ -2172,9 +2177,8 @@ function renderTestResultsSection() {
         const passed = tr.validation?.passed;
         const listing = tr.listing || {};
 
-        const scoreColor = score >= 80 ? 'bg-green-100 text-green-700'
-            : score >= 50 ? 'bg-amber-100 text-amber-700'
-            : 'bg-red-100 text-red-700';
+        const statusColor = passed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700';
+        const statusLabel = passed ? 'Checked — OK' : 'Needs work';
 
         const statusBadge = passed
             ? '<span class="badge badge-success text-xs">Passed</span>'
@@ -2198,7 +2202,7 @@ function renderTestResultsSection() {
             <div class="context-item">
                 <div class="flex items-center justify-between mb-1">
                     <span class="text-sm font-medium truncate">${escapeHtml(name)}</span>
-                    <span class="text-xs font-bold px-2 py-0.5 rounded-full ${scoreColor}">${score}/100</span>
+                    <span class="text-xs font-bold px-2 py-0.5 rounded-full ${statusColor}">${statusLabel}</span>
                 </div>
                 ${titleHtml}
                 ${descHtml}
@@ -2211,13 +2215,13 @@ function renderTestResultsSection() {
         `;
     });
 
-    const avg = state.testResults.reduce((sum, tr) => sum + (tr.validation?.score || 0), 0) / state.testResults.length;
+    const panelPassedCount = state.testResults.filter(tr => tr.validation?.passed).length;
 
     return `
         <div class="context-section">
             <div class="context-section-title">
                 Test Results
-                <span class="float-right text-xs font-normal normal-case">Avg: ${Math.round(avg)}/100</span>
+                <span class="float-right text-xs font-normal normal-case">${panelPassedCount}/${state.testResults.length} passed</span>
             </div>
             ${cardsHtml}
         </div>
