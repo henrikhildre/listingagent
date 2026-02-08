@@ -1031,12 +1031,18 @@ IMPORTANT RULES:
 
 Test your script on the attached data. Print a summary showing item count and fields."""
 
-    text_response, script = await generate_code_execution_with_parts(
-        prompt,
-        csv_data=sample_data,
-        thinking_level="high",
-    )
-    return script, text_response
+    for attempt in range(2):
+        text_response, script = await generate_code_execution_with_parts(
+            prompt,
+            csv_data=sample_data,
+            thinking_level="high",
+        )
+        if script:
+            return script, text_response
+        logger.warning(
+            "LLM returned no code_execution block (attempt %d/2)", attempt + 1
+        )
+    return None, text_response
 
 
 async def _run_and_validate_script(
