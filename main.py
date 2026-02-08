@@ -846,12 +846,12 @@ async def auto_refine(req: JobIdRequest):
                 if changes:
                     yield _sse_event(
                         "progress",
-                        {"text": f"Testing improved recipe — {changes[:80]}..."},
+                        {"text": f"{changes} — re-testing (round {i + 2})..."},
                     )
                 else:
                     yield _sse_event(
                         "progress",
-                        {"text": f"Re-testing on your products (round {i + 2})..."},
+                        {"text": f"Recipe improved — re-testing (round {i + 2})..."},
                     )
                 test_results = await recipe_module.test_recipe(
                     req.job_id, current_recipe

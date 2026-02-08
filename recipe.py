@@ -652,7 +652,7 @@ Respond with EXACTLY this JSON structure (no markdown fencing):
     "prompt_template": "the updated prompt template...",
     "output_schema": {{}},
     "validation_code": "def validate_listing(listing, style_profile):\\n    ...",
-    "changes_made": "Brief description of what you changed and why"
+    "changes_made": "One short sentence describing what you improved, written for a non-technical seller (e.g. 'Made titles more descriptive' or 'Added missing size info to listings'). No code or schema jargon."
 }}
 """
 
