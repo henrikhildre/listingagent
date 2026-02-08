@@ -954,7 +954,7 @@ The attached data contains a representative sample of the full dataset \
 {transcript}
 
 ## Your Task
-Write a Python script that:
+Write a Python script that (IMPORTANT: never use open() — all data is pre-loaded in string variables):
 
 {read_step}
 2. Cleans and normalizes the data:
@@ -1165,8 +1165,11 @@ The following extraction script had errors when run against the full dataset.
 {sample['total_rows']}
 
 Fix the script to address these errors. Keep the same interface:
-- Read from `{data_var}` (string) and `image_filenames` (list)
+- Read from `{data_var}` (string variable already in scope) and `image_filenames` (list)
 - Assign JSON string to `result_json`
+- NEVER use open() — data is already provided as a string variable.
+  For CSV: `df = pd.read_csv(io.StringIO({data_var}))`
+  For JSON: `data = json.loads({data_var})`
 
 Test on the attached sample data, then print a summary."""
 
