@@ -147,13 +147,16 @@ def _build_conversation_prompt(
 def _extract_style_profile(text: str) -> dict | None:
     """Try to extract a style_profile JSON from the model's response.
     Returns the parsed dict if found, otherwise None."""
-    # Look for ```json ... ``` fenced block
-    pattern = r"```json\s*(\{.*?\})\s*```"
-    match = re.search(pattern, text, re.DOTALL)
+    # Look for ```json ... ``` fenced block (greedy — handles nested braces/arrays)
+    match = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
+    if not match:
+        match = re.search(r"```\s*\n(\{.*)", text, re.DOTALL)
     if match:
         try:
-            data = json.loads(match.group(1))
-            # Validate against StyleProfile schema (lenient: fill defaults)
+            data = json.loads(match.group(1).strip().rstrip("`"))
+        except json.JSONDecodeError:
+            return None
+        try:
             profile = StyleProfile(
                 platform=data.get("platform", "general"),
                 seller_type=data.get("seller_type", ""),
@@ -168,7 +171,7 @@ def _extract_style_profile(text: str) -> dict | None:
                 example_listings=data.get("example_listings", []),
             )
             return profile.model_dump()
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             return None
     return None
 
@@ -176,7 +179,7 @@ def _extract_style_profile(text: str) -> dict | None:
 def _strip_json_block(text: str) -> str:
     """Remove the JSON fenced block from the visible response so the user
     sees a clean message while we capture the profile separately."""
-    return re.sub(r"```json\s*\{.*?\}\s*```", "", text, flags=re.DOTALL).strip()
+    return re.sub(r"```json\s*\n.*?```", "", text, flags=re.DOTALL).strip()
 
 
 async def _save_artifact(job_id: str, filename: str, data: object) -> None:
