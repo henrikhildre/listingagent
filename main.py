@@ -915,10 +915,11 @@ async def auto_refine(req: JobIdRequest):
                     {"text": f"Some listings need work — improving the recipe (round {i + 2})..."},
                 )
 
-                start_step(f"refine_round_{i + 2}")
+                start_step(f"refine_{i + 2}")
                 current_recipe = await recipe_module.refine_recipe(
                     req.job_id, current_recipe, feedback, test_results
                 )
+                end_step(f"refine_{i + 2}")
 
                 changes = current_recipe.get("changes_made", "")
                 if changes:
@@ -931,10 +932,11 @@ async def auto_refine(req: JobIdRequest):
                         "progress",
                         {"text": f"Recipe improved — re-testing (round {i + 2})..."},
                     )
+                start_step(f"retest_{i + 2}")
                 test_results = await recipe_module.test_recipe(
                     req.job_id, current_recipe
                 )
-                end_step(f"refine_round_{i + 2}")
+                end_step(f"retest_{i + 2}")
                 current_recipe = _load_json_artifact(job_path, "recipe.json")
 
                 avg, all_passed = check_quality(test_results)

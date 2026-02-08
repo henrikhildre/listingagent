@@ -427,6 +427,23 @@ async def generate_with_search(
     return response.text or ""
 
 
+def _strip_additional_properties(schema: dict) -> dict:
+    """Recursively strip 'additionalProperties' — unsupported by Gemini structured output."""
+    if not isinstance(schema, dict):
+        return schema
+    cleaned = {}
+    for k, v in schema.items():
+        if k == "additionalProperties":
+            continue
+        if isinstance(v, dict):
+            cleaned[k] = _strip_additional_properties(v)
+        elif isinstance(v, list):
+            cleaned[k] = [_strip_additional_properties(i) if isinstance(i, dict) else i for i in v]
+        else:
+            cleaned[k] = v
+    return cleaned
+
+
 @with_retry
 async def generate_structured(
     prompt: str,
@@ -450,6 +467,10 @@ async def generate_structured(
         Parsed JSON dictionary
     """
     model_name = model or BATCH_MODEL
+
+    # Gemini does not support additionalProperties — strip before sending
+    if schema:
+        schema = _strip_additional_properties(schema)
 
     # Build content parts
     parts = [types.Part.from_text(text=prompt)]

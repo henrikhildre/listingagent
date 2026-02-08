@@ -49,7 +49,6 @@ DEFAULT_OUTPUT_SCHEMA = {
         "hashtags": {"type": "array", "items": {"type": "string"}, "maxItems": 30},
         "item_specifics": {
             "type": "object",
-            "additionalProperties": {"type": "string"},
         },
         "condition_description": {"type": "string"},
     },
