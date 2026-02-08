@@ -48,9 +48,6 @@ DEFAULT_OUTPUT_SCHEMA = {
         "notes_for_seller": {"type": "string"},
         "social_caption": {"type": "string"},
         "hashtags": {"type": "array", "items": {"type": "string"}, "maxItems": 30},
-        "item_specifics": {
-            "type": "object",
-        },
         "condition_description": {"type": "string"},
     },
     "required": ["title", "description", "tags", "suggested_price", "confidence"],

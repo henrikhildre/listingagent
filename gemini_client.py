@@ -444,12 +444,7 @@ async def generate_with_search(
 
 
 def _sanitize_schema(schema: dict) -> dict:
-    """Recursively fix schema issues unsupported by Gemini structured output.
-
-    - Strips 'additionalProperties' (unsupported)
-    - Converts bare {"type": "object"} with no properties to array of key/value pairs
-      (Gemini requires OBJECT to have at least one defined property)
-    """
+    """Recursively strip 'additionalProperties' — unsupported by Gemini structured output."""
     if not isinstance(schema, dict):
         return schema
     cleaned = {}
@@ -462,19 +457,6 @@ def _sanitize_schema(schema: dict) -> dict:
             cleaned[k] = [_sanitize_schema(i) if isinstance(i, dict) else i for i in v]
         else:
             cleaned[k] = v
-    # Bare object with no properties → convert to array of {key, value}
-    if cleaned.get("type") == "object" and not cleaned.get("properties"):
-        cleaned = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string"},
-                    "value": {"type": "string"},
-                },
-                "required": ["key", "value"],
-            },
-        }
     return cleaned
 
 
