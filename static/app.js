@@ -600,11 +600,21 @@ async function startDiscovery() {
 
     const progress = showInlineProgress('Analyzing your uploaded files...');
 
+    const discoverySteps = [
+        [3000,  'Reading spreadsheets and images...'],
+        [8000,  'Identifying data structure...'],
+        [14000, 'Mapping fields and relationships...'],
+    ];
+    const discoveryTimers = discoverySteps.map(([ms, msg]) =>
+        setTimeout(() => updateInlineProgress(progress, msg), ms)
+    );
+
     try {
         const result = await api('/api/discover', {
             method: 'POST',
             body: JSON.stringify({ job_id: state.jobId }),
         });
+        discoveryTimers.forEach(clearTimeout);
 
         removeInlineProgress(progress);
 
@@ -634,6 +644,7 @@ async function startDiscovery() {
     } catch (error) {
         removeInlineProgress(progress);
         setChatInputEnabled(true);
+        discoveryTimers.forEach(clearTimeout);
         showToast('Discovery failed: ' + error.message, 'error');
         addMessage('assistant', 'Sorry, I encountered an error analyzing your data. Please try sending a message with more details about your files.');
     }
@@ -982,7 +993,19 @@ function removeTypingIndicator(indicator) {
  */
 async function buildDataModel() {
     setChatInputEnabled(false);
-    const progress = showInlineProgress('Finalizing data model...');
+    const progress = showInlineProgress('Building extraction script...');
+
+    // Rotate status messages so the user knows things are progressing
+    const steps = [
+        [4000,  'Generating extraction script...'],
+        [10000, 'Running script on your data...'],
+        [18000, 'Validating extracted products...'],
+        [28000, 'Matching images to products...'],
+        [40000, 'Almost there — running quality checks...'],
+    ];
+    const timers = steps.map(([ms, msg]) =>
+        setTimeout(() => updateInlineProgress(progress, msg), ms)
+    );
 
     try {
         const result = await api('/api/build-data-model', {
@@ -992,6 +1015,7 @@ async function buildDataModel() {
                 conversation_history: state.conversationHistory,
             }),
         });
+        timers.forEach(clearTimeout);
 
         state.dataModel = result.data_model;
 
@@ -1019,6 +1043,7 @@ async function buildDataModel() {
         await startInterview(progress);
 
     } catch (error) {
+        timers.forEach(clearTimeout);
         removeInlineProgress(progress);
         setChatInputEnabled(true);
         showToast('Failed to build data model: ' + error.message, 'error');
