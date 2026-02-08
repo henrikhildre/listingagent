@@ -54,6 +54,8 @@ _token_usage = {"input": 0, "output": 0, "calls": 0}
 _current_step: str | None = None
 _step_snapshot: dict | None = None  # snapshot of _token_usage at step start
 _step_history: list[dict] = []  # completed step summaries
+_last_call_tokens: tuple[int, int] = (0, 0)  # (input, output) of last API call
+_gen_samples: list[tuple[int, int]] = []  # per-product generation token samples
 
 
 def _calc_cost(input_tokens: int, output_tokens: int) -> float:
@@ -71,6 +73,8 @@ def _log_tokens(response, model_name: str, caller: str) -> None:
     _token_usage["input"] += inp
     _token_usage["output"] += out
     _token_usage["calls"] += 1
+    global _last_call_tokens
+    _last_call_tokens = (inp, out)
     cost = _calc_cost(inp, out)
     logger.info(
         "TOKENS [%s] %s: in=%d out=%d ($%.4f) | cumulative: in=%d out=%d, calls=%d ($%.4f)",
@@ -80,10 +84,16 @@ def _log_tokens(response, model_name: str, caller: str) -> None:
     )
 
 
+def record_gen_sample() -> None:
+    """Record the last API call's tokens as a generation sample for cost estimation."""
+    _gen_samples.append(_last_call_tokens)
+
+
 def start_step(name: str) -> None:
     """Mark the beginning of a workflow step for token tracking."""
     global _current_step, _step_snapshot
     _current_step = name
+    _gen_samples.clear()
     _step_snapshot = {
         "input": _token_usage["input"],
         "output": _token_usage["output"],
@@ -134,7 +144,8 @@ def estimate_batch_cost(sample_count: int, total_count: int) -> dict:
     """Estimate full batch cost based on sample token usage.
 
     Call this after a recipe test step to project what the full batch will cost.
-    Uses the token usage from the current/last step as the sample baseline.
+    Uses generation-only token samples when available (ignoring judge overhead),
+    falling back to step-level totals divided by sample count.
     """
     if not _step_history:
         return {}
@@ -142,8 +153,13 @@ def estimate_batch_cost(sample_count: int, total_count: int) -> dict:
     if sample_count <= 0:
         return {}
 
-    per_product_in = last["input"] / sample_count
-    per_product_out = last["output"] / sample_count
+    if _gen_samples:
+        # Use generation-only samples (excludes judge eval overhead)
+        per_product_in = sum(s[0] for s in _gen_samples) / len(_gen_samples)
+        per_product_out = sum(s[1] for s in _gen_samples) / len(_gen_samples)
+    else:
+        per_product_in = last["input"] / sample_count
+        per_product_out = last["output"] / sample_count
     est_in = int(per_product_in * total_count)
     est_out = int(per_product_out * total_count)
     est_cost = _calc_cost(est_in, est_out)
@@ -427,8 +443,13 @@ async def generate_with_search(
     return response.text or ""
 
 
-def _strip_additional_properties(schema: dict) -> dict:
-    """Recursively strip 'additionalProperties' — unsupported by Gemini structured output."""
+def _sanitize_schema(schema: dict) -> dict:
+    """Recursively fix schema issues unsupported by Gemini structured output.
+
+    - Strips 'additionalProperties' (unsupported)
+    - Converts bare {"type": "object"} with no properties to array of key/value pairs
+      (Gemini requires OBJECT to have at least one defined property)
+    """
     if not isinstance(schema, dict):
         return schema
     cleaned = {}
@@ -436,11 +457,24 @@ def _strip_additional_properties(schema: dict) -> dict:
         if k == "additionalProperties":
             continue
         if isinstance(v, dict):
-            cleaned[k] = _strip_additional_properties(v)
+            cleaned[k] = _sanitize_schema(v)
         elif isinstance(v, list):
-            cleaned[k] = [_strip_additional_properties(i) if isinstance(i, dict) else i for i in v]
+            cleaned[k] = [_sanitize_schema(i) if isinstance(i, dict) else i for i in v]
         else:
             cleaned[k] = v
+    # Bare object with no properties → convert to array of {key, value}
+    if cleaned.get("type") == "object" and not cleaned.get("properties"):
+        cleaned = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+                "required": ["key", "value"],
+            },
+        }
     return cleaned
 
 
@@ -470,7 +504,7 @@ async def generate_structured(
 
     # Gemini does not support additionalProperties — strip before sending
     if schema:
-        schema = _strip_additional_properties(schema)
+        schema = _sanitize_schema(schema)
 
     # Build content parts
     parts = [types.Part.from_text(text=prompt)]

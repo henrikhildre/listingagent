@@ -21,6 +21,7 @@ from pathlib import Path
 from gemini_client import (
     generate_with_text,
     generate_structured,
+    record_gen_sample,
     REASONING_MODEL,
     BATCH_MODEL,
 )
@@ -537,6 +538,7 @@ async def _test_single_product(
         model=BATCH_MODEL,
         thinking_level="low",
     )
+    record_gen_sample()  # track generation-only tokens for batch cost estimate
 
     # 3b. Quick word count fix-up if description is outside target range
     word_range = _parse_word_count_range(style_profile)
