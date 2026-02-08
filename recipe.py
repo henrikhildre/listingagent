@@ -405,32 +405,30 @@ async def test_recipe(
     else:
         samples = select_diverse_samples(products, count=3)
 
-    test_results = []
-
-    for product in samples:
+    async def _safe_test(product):
         try:
-            result = await _test_single_product(job_id, recipe, product, style_profile)
-            test_results.append(result)
+            return await _test_single_product(job_id, recipe, product, style_profile)
         except Exception as e:
             logger.error(
                 "Error testing product %s: %s",
                 product.get("id", "unknown"),
                 str(e),
             )
-            test_results.append(
-                {
-                    "product_id": product.get("id", "unknown"),
-                    "product_name": product.get("name", "Unknown"),
-                    "listing": None,
-                    "validation": {
-                        "passed": False,
-                        "score": 0,
-                        "issues": [f"Error during testing: {str(e)}"],
-                    },
-                    "image_filename": (product.get("image_files") or [None])[0],
-                    "error": str(e),
-                }
-            )
+            return {
+                "product_id": product.get("id", "unknown"),
+                "product_name": product.get("name", "Unknown"),
+                "listing": None,
+                "validation": {
+                    "passed": False,
+                    "score": 0,
+                    "issues": [f"Error during testing: {str(e)}"],
+                },
+                "image_filename": (product.get("image_files") or [None])[0],
+                "error": str(e),
+            }
+
+    test_results = await asyncio.gather(*[_safe_test(p) for p in samples])
+    test_results = list(test_results)
 
     # Store test results in the recipe
     recipe["test_results"] = test_results
