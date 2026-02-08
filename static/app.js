@@ -5,6 +5,22 @@
  * States: UPLOAD -> DISCOVER -> INTERVIEW -> RECIPE_TEST -> EXECUTING -> RESULTS
  *
  * No framework. Vanilla JS. Chat is the primary interface for phases 1-3.
+ *
+ * Table of Contents:
+ *   Global State .................. ~14
+ *   Utility Functions ............. ~30
+ *   View Management ............... ~227
+ *   Upload (Phase 0) .............. ~291
+ *   Chat (Phases 1-3) ............. ~654
+ *   Build Data Model .............. ~988
+ *   Interview (Phase 2) ........... ~1055
+ *   Recipe Building & Testing ..... ~1100
+ *   Execution (Phase 4) ........... ~1364
+ *   Context Panel ................. ~1798
+ *   Download & Export .............. ~2094
+ *   Listing Detail Modal .......... ~2160
+ *   Login ......................... ~2343
+ *   Initialization ................ ~2385
  */
 
 // ============================================================================
@@ -666,6 +682,7 @@ function addMessage(role, content, { html = false } = {}) {
 
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble';
+    // Trust boundary: html=true must only be used with API-generated content, never raw user input
     bubble.innerHTML = html ? content : formatMessage(content);
 
     wrapper.appendChild(bubble);

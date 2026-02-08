@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import re
+from typing import Any, Callable
 
 from file_utils import (
     categorize_files,
@@ -39,7 +40,7 @@ from file_utils import (
     read_spreadsheet_sample,
 )
 from gemini_client import (
-    generate_code_execution_with_parts,
+    extract_python_code,
     generate_with_code_execution,
     generate_with_images,
     generate_with_text,
@@ -356,7 +357,7 @@ _ALLOWED_IMPORTS = {"pandas", "pd", "io", "json", "re", "math"}
 async def build_data_model(
     job_id: str,
     conversation_history: list[dict],
-    progress: "Callable[[str], Any] | None" = None,
+    progress: Callable[[str], Any] | None = None,
 ) -> dict:
     """Build data_model.json by routing to the best extraction strategy.
 
@@ -449,7 +450,7 @@ async def _build_spreadsheet_data_model(
     sheet_filename: str,
     all_images: list[str],
     conversation_history: list[dict],
-    progress: "Callable[[str], Any] | None" = None,
+    progress: Callable[[str], Any] | None = None,
 ) -> dict:
     """Full pipeline: sample → LLM script → server-side exec → validate → iterate.
 
@@ -503,7 +504,7 @@ async def _build_json_data_model(
     json_filename: str,
     all_images: list[str],
     conversation_history: list[dict],
-    progress: "Callable[[str], Any] | None" = None,
+    progress: Callable[[str], Any] | None = None,
 ) -> dict:
     """Extract products from a JSON file using the code execution pipeline."""
     if progress:
@@ -604,7 +605,7 @@ IMPORTANT:
 - For freeform descriptions, extract what you can"""
 
     response = await generate_with_text(prompt, thinking_level="high")
-    result = _parse_json_from_response(response)
+    result = parse_json_from_response(response)
 
     products = result.get("products", [])
     fields = result.get("fields_discovered", [])
@@ -647,15 +648,13 @@ async def _build_large_paste_data_model(
     pasted_text: str,
     all_images: list[str],
     conversation_history: list[dict],
-    progress: "Callable[[str], Any] | None" = None,
+    progress: Callable[[str], Any] | None = None,
 ) -> dict:
     """Handle large pasted text by converting to a data file and using code execution.
 
     Saves the text to a temp file and runs it through the script-based pipeline,
     similar to spreadsheet extraction.
     """
-    import tempfile
-
     if progress:
         await progress("Structuring your product data...")
     # Save pasted text to a temp CSV-like file for the code execution pipeline
@@ -736,13 +735,13 @@ Write a Python script that:
 IMPORTANT:
 - The script MUST work on the full text, not just this sample
 - Do NOT hardcode values from the sample
-- Handle edge cases: empty lines, mixed formatting"""
+- Handle edge cases: empty lines, mixed formatting
 
-    _, script = await generate_code_execution_with_parts(
-        prompt,
-        csv_data=sample["sample_csv"],
-        thinking_level="high",
-    )
+Return your script inside a single ```python code block."""
+
+    full_prompt = f"{prompt}\n\n## Sample Text\n```\n{sample['sample_csv']}\n```"
+    text_response = await generate_with_text(full_prompt, thinking_level="high")
+    script = extract_python_code(text_response)
 
     if not script:
         raise ValueError("LLM did not produce a script for large pasted text")
@@ -875,7 +874,7 @@ If you cannot determine an attribute, omit it rather than guessing."""
             prompt, image_parts, thinking_level="medium",
         )
         try:
-            result = _parse_json_from_response(response)
+            result = parse_json_from_response(response)
             for p in result.get("products", []):
                 all_products.append(p)
         except ValueError:
@@ -1029,19 +1028,16 @@ IMPORTANT RULES:
 - Handle edge cases: empty cells, mixed types, encoding oddities.
 - Every product must have a unique "id" (e.g., "product_001", "product_002").
 
-Test your script on the attached data. Print a summary showing item count and fields."""
+Return your script inside a single ```python code block."""
+
+    full_prompt = f"{prompt}\n\n## Sample Data\n```\n{sample_data}\n```"
 
     for attempt in range(2):
-        text_response, script = await generate_code_execution_with_parts(
-            prompt,
-            csv_data=sample_data,
-            thinking_level="high",
-        )
+        text_response = await generate_with_text(full_prompt, thinking_level="high")
+        script = extract_python_code(text_response)
         if script:
             return script, text_response
-        logger.warning(
-            "LLM returned no code_execution block (attempt %d/2)", attempt + 1
-        )
+        logger.warning("LLM returned no code block (attempt %d/2)", attempt + 1)
     return None, text_response
 
 
@@ -1053,7 +1049,7 @@ async def _run_and_validate_script(
     sample: dict,
     conversation_history: list[dict],
     data_format: str = "csv",
-    progress: "Callable[[str], Any] | None" = None,
+    progress: Callable[[str], Any] | None = None,
 ) -> list[dict]:
     """Run extraction script server-side, validate, fix if needed.
 
@@ -1248,14 +1244,11 @@ Keep the same interface:
   For CSV: `df = pd.read_csv(io.StringIO({data_var}))`
   For JSON: `data = json.loads({data_var})`
 
-Test on the attached sample data, then print a summary."""
+Return the fixed script inside a single ```python code block."""
 
-    text_response, fixed_script = await generate_code_execution_with_parts(
-        prompt,
-        csv_data=sample_data,
-        thinking_level="high",
-    )
-    return fixed_script
+    full_prompt = f"{prompt}\n\n## Sample Data\n```\n{sample_data}\n```"
+    text_response = await generate_with_text(full_prompt, thinking_level="high")
+    return extract_python_code(text_response)
 
 
 # ---------------------------------------------------------------------------
@@ -1291,8 +1284,8 @@ def _check_extraction_code_safety(code: str) -> str | None:
     return None
 
 
-def _extraction_safe_builtins() -> dict:
-    """Builtins available inside the extraction sandbox."""
+def get_safe_builtins(print_fn=print) -> dict:
+    """Builtins available inside restricted sandboxes (extraction & recipe validation)."""
     return {
         "len": len, "str": str, "int": int, "float": float,
         "bool": bool, "list": list, "dict": dict, "set": set,
@@ -1301,7 +1294,7 @@ def _extraction_safe_builtins() -> dict:
         "min": min, "max": max, "sum": sum, "abs": abs, "round": round,
         "any": any, "all": all, "isinstance": isinstance, "type": type,
         "hasattr": hasattr, "getattr": getattr,
-        "print": print,
+        "print": print_fn,
         "True": True, "False": False, "None": None,
         "ValueError": ValueError, "TypeError": TypeError,
         "KeyError": KeyError, "IndexError": IndexError,
@@ -1310,34 +1303,8 @@ def _extraction_safe_builtins() -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Image-only fallback
-# ---------------------------------------------------------------------------
-
-
-def _build_image_only_data_model(all_images: list[str]) -> dict:
-    """When there is no spreadsheet, each image becomes a product."""
-    products = []
-    for i, img in enumerate(all_images, 1):
-        products.append({
-            "id": f"product_{i:03d}",
-            "image_files": [img],
-            "source": "image_only",
-        })
-
-    return {
-        "sources": {
-            "images": {
-                "total": len(all_images),
-                "matched": len(all_images),
-                "unmatched": [],
-            }
-        },
-        "fields_discovered": [],
-        "products": products,
-        "unmatched_images": [],
-        "matching_strategy": "Each image treated as a separate product",
-    }
+# Backward-compatible alias used within this module
+_extraction_safe_builtins = get_safe_builtins
 
 
 # ---------------------------------------------------------------------------
@@ -1544,7 +1511,7 @@ def _load_saved_script(job_path, fingerprint: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_json_from_response(text: str) -> dict:
+def parse_json_from_response(text: str) -> dict:
     """Extract JSON from a model response that may contain markdown fences.
 
     Tries multiple strategies:

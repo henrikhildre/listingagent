@@ -29,6 +29,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from discovery import parse_json_from_response
 from file_utils import get_job_path, load_image_as_bytes, create_output_zip
 from gemini_client import (
     generate_structured,
@@ -198,7 +199,7 @@ async def _process_product(
                 thinking_level="high",
             )
 
-        listing = _parse_json_from_text(raw_text)
+        listing = parse_json_from_response(raw_text)
     except Exception as e:
         logger.error("Retry failed for product %s: %s", product_id, e)
         # Return the first attempt's result as a failure
@@ -267,39 +268,6 @@ def _failed_result(
         "failed": True,
         "error": error,
     }
-
-
-def _parse_json_from_text(text: str) -> dict:
-    """
-    Extract a JSON object from a model response that may include
-    markdown fences or surrounding prose.
-    """
-    cleaned = text.strip()
-
-    # Strip markdown code fences
-    if cleaned.startswith("```"):
-        first_newline = cleaned.index("\n")
-        cleaned = cleaned[first_newline + 1 :]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
-
-    # Try direct parse first
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Try to find the first { ... } block
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start >= 0 and end > start:
-        try:
-            return json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError("Could not parse JSON from model response")
 
 
 # ---------------------------------------------------------------------------
@@ -398,11 +366,6 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     await generate_summary_csv(job_id, results)
     report = generate_batch_report(job_id, results, elapsed_seconds=elapsed)
 
-    # Save report
-    report_path = job_path / "output" / "report.json"
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, default=str)
-
     # Generate platform-specific exports
     try:
         generate_etsy_csv(job_id)
@@ -487,47 +450,49 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
         "condition_description",
     ]
 
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
+    def _write_csv():
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
 
-        for result in results:
-            listing = result.get("listing") or {}
-            tags_list = listing.get("tags", [])
-            tags_str = (
-                ";".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
-            )
-            hashtags_list = listing.get("hashtags", [])
-            hashtags_str = (
-                ";".join(hashtags_list)
-                if isinstance(hashtags_list, list)
-                else str(hashtags_list)
-            )
-            specifics = listing.get("item_specifics", {})
-            specifics_str = (
-                "; ".join(f"{k}: {v}" for k, v in specifics.items())
-                if isinstance(specifics, dict)
-                else str(specifics)
-            )
+            for result in results:
+                listing = result.get("listing") or {}
+                tags_list = listing.get("tags", [])
+                tags_str = (
+                    ";".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+                )
+                hashtags_list = listing.get("hashtags", [])
+                hashtags_str = (
+                    ";".join(hashtags_list)
+                    if isinstance(hashtags_list, list)
+                    else str(hashtags_list)
+                )
+                specifics = listing.get("item_specifics", {})
+                specifics_str = (
+                    "; ".join(f"{k}: {v}" for k, v in specifics.items())
+                    if isinstance(specifics, dict)
+                    else str(specifics)
+                )
 
-            writer.writerow(
-                {
-                    "product_id": result.get("product_id", ""),
-                    "sku": result.get("sku") or "",
-                    "title": listing.get("title", ""),
-                    "description": listing.get("description", ""),
-                    "tags": tags_str,
-                    "suggested_price": listing.get("suggested_price", ""),
-                    "confidence": listing.get("confidence", ""),
-                    "validation_score": result.get("validation", {}).get("score", ""),
-                    "image_filename": result.get("image_filename") or "",
-                    "social_caption": listing.get("social_caption", ""),
-                    "hashtags": hashtags_str,
-                    "item_specifics": specifics_str,
-                    "condition_description": listing.get("condition_description", ""),
-                }
-            )
+                writer.writerow(
+                    {
+                        "product_id": result.get("product_id", ""),
+                        "sku": result.get("sku") or "",
+                        "title": listing.get("title", ""),
+                        "description": listing.get("description", ""),
+                        "tags": tags_str,
+                        "suggested_price": listing.get("suggested_price", ""),
+                        "confidence": listing.get("confidence", ""),
+                        "validation_score": result.get("validation", {}).get("score", ""),
+                        "image_filename": result.get("image_filename") or "",
+                        "social_caption": listing.get("social_caption", ""),
+                        "hashtags": hashtags_str,
+                        "item_specifics": specifics_str,
+                        "condition_description": listing.get("condition_description", ""),
+                    }
+                )
 
+    await asyncio.to_thread(_write_csv)
     logger.info("Summary CSV written to %s", csv_path)
     return csv_path
 

@@ -24,6 +24,7 @@ from gemini_client import (
     REASONING_MODEL,
     BATCH_MODEL,
 )
+from discovery import get_safe_builtins
 from file_utils import get_job_path, load_image_as_bytes
 
 logger = logging.getLogger(__name__)
@@ -883,38 +884,8 @@ def run_validation(
         logger.warning("Validation code rejected: %s", safety_error)
         return _basic_validation(listing, style_profile)
 
-    # Restricted globals -- only safe builtins
-    safe_builtins = {
-        "len": len,
-        "str": str,
-        "int": int,
-        "float": float,
-        "bool": bool,
-        "list": list,
-        "dict": dict,
-        "set": set,
-        "tuple": tuple,
-        "range": range,
-        "enumerate": enumerate,
-        "zip": zip,
-        "map": map,
-        "filter": filter,
-        "sorted": sorted,
-        "min": min,
-        "max": max,
-        "sum": sum,
-        "abs": abs,
-        "round": round,
-        "any": any,
-        "all": all,
-        "isinstance": isinstance,
-        "print": lambda *a, **kw: None,  # no-op print
-        "True": True,
-        "False": False,
-        "None": None,
-    }
-
-    exec_globals = {"__builtins__": safe_builtins}
+    # Restricted globals -- only safe builtins (no-op print for validation)
+    exec_globals = {"__builtins__": get_safe_builtins(print_fn=lambda *a, **kw: None)}
     exec_locals = {}
 
     try:

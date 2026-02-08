@@ -4,6 +4,7 @@ Handles job directory creation, file categorization, spreadsheet reading,
 image processing, and output packaging.
 """
 
+import json as _json
 from pathlib import Path
 import random
 import shutil
@@ -270,8 +271,6 @@ def cleanup_job(job_id: str):
 # ---------------------------------------------------------------------------
 # JSON file reading
 # ---------------------------------------------------------------------------
-
-import json as _json
 
 
 def read_json_preview(filepath: Path, max_items: int = 5) -> dict:

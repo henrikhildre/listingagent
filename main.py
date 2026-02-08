@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -47,6 +48,7 @@ import discovery
 import executor
 import recipe as recipe_module
 from file_utils import (
+    IMAGE_EXTENSIONS,
     MAX_PASTE_LENGTH,
     create_job_directory,
     get_job_path,
@@ -125,8 +127,6 @@ def _is_authenticated_cookie(cookies: dict) -> bool:
 
 def _check_rate_limit(ip: str) -> bool:
     """Return True if the IP is allowed to attempt login."""
-    import time
-
     now = time.time()
     attempts = _login_attempts.get(ip, [])
     # Keep only attempts within the window
@@ -136,8 +136,6 @@ def _check_rate_limit(ip: str) -> bool:
 
 
 def _record_failed_attempt(ip: str):
-    import time
-
     _login_attempts.setdefault(ip, []).append(time.time())
 
 
@@ -255,10 +253,8 @@ def _determine_phase(job_path: Path) -> str:
     """Determine the current phase by checking which artifacts exist."""
     if (job_path / "output" / "report.json").exists():
         return "complete"
-    if job_path.joinpath("job_id") and any(
-        task_id in active_tasks and not active_tasks[task_id].done()
-        for task_id in [job_path.name]
-    ):
+    job_id = job_path.name
+    if job_id in active_tasks and not active_tasks[job_id].done():
         return "executing"
     if (job_path / "recipe.json").exists():
         r = json.loads((job_path / "recipe.json").read_text())
@@ -332,9 +328,6 @@ async def upload_files(files: list[UploadFile] = File(...)):
 
 DEMO_DATA_DIR = Path(__file__).parent / "demo_data"
 
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
-
-
 @app.get("/api/demo-catalog")
 async def demo_catalog():
     """Return the demo manifest enriched with preview text for paste/JSON demos."""
@@ -365,7 +358,7 @@ async def demo_catalog():
             if images_dir.exists():
                 demo["all_images"] = sorted(
                     f.name for f in images_dir.iterdir()
-                    if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES
+                    if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
                 )
 
     return {"demos": demos}
@@ -427,7 +420,7 @@ async def load_demo(req: LoadDemoRequest = LoadDemoRequest()):
         images_dir = demo_dir / files.get("images_dir", "images")
         if images_dir.exists():
             for f in sorted(images_dir.iterdir()):
-                if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES:
+                if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS:
                     shutil.copy2(f, uploads_dir / f.name)
                     saved_files.append(f.name)
 
@@ -449,7 +442,7 @@ async def load_demo(req: LoadDemoRequest = LoadDemoRequest()):
         images_dir = demo_dir / files.get("images_dir", "images")
         if images_dir.exists():
             for f in sorted(images_dir.iterdir()):
-                if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES:
+                if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS:
                     shutil.copy2(f, uploads_dir / f.name)
                     saved_files.append(f.name)
 

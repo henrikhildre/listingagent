@@ -7,8 +7,10 @@ multimodal, code execution, search, structured output).
 """
 
 import asyncio
+import json
 import logging
 import os
+import re
 from functools import wraps
 from typing import Optional
 
@@ -39,6 +41,18 @@ def _ensure_client():
 
 
 logger = logging.getLogger(__name__)
+
+
+def extract_python_code(text: str) -> str | None:
+    """Extract the last Python code block from markdown-formatted LLM response."""
+    if not text:
+        return None
+    # Prefer ```python blocks, fall back to generic ``` blocks
+    blocks = re.findall(r"```python\s*\n(.*?)```", text, re.DOTALL)
+    if not blocks:
+        blocks = re.findall(r"```\s*\n(.*?)```", text, re.DOTALL)
+    return blocks[-1].strip() if blocks else None
+
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -224,79 +238,6 @@ async def generate_with_code_execution(
 
 
 @with_retry
-async def generate_code_execution_with_parts(
-    prompt: str,
-    csv_data: str | None = None,
-    image_parts: Optional[list] = None,
-    *,
-    model: Optional[str] = None,
-    thinking_level: str = "high",
-) -> tuple[str, str | None]:
-    """Code execution that also returns the last generated script.
-
-    Attaches CSV data as an inline text/csv part so the sandbox can read it.
-
-    Returns:
-        (text_response, last_executable_code_or_None)
-    """
-    model_name = model or REASONING_MODEL
-
-    parts = [types.Part.from_text(text=prompt)]
-
-    if csv_data:
-        parts.append(
-            types.Part.from_bytes(data=csv_data.encode("utf-8"), mime_type="text/csv")
-        )
-
-    if image_parts:
-        for img_bytes, mime_type in image_parts:
-            parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
-
-    config = types.GenerateContentConfig(
-        tools=[CODE_EXECUTION_TOOL],
-        thinking_config=types.ThinkingConfig(
-            thinking_level=_valid_thinking_level(thinking_level)
-        ),
-    )
-
-    response = await _ensure_client().aio.models.generate_content(
-        model=model_name, contents=parts, config=config
-    )
-
-    # Walk response parts to extract executable_code blocks
-    all_scripts = []
-    text_parts = []
-    if response.candidates and response.candidates[0].content:
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "executable_code") and part.executable_code:
-                all_scripts.append(part.executable_code.code)
-            if hasattr(part, "text") and part.text:
-                text_parts.append(part.text)
-
-    # Pick the best script: prefer the last self-contained block (has both
-    # data reading and result assignment).  If no single block is complete,
-    # concatenate all blocks so variables defined in earlier blocks are
-    # available to later ones (matching Gemini's sandbox behavior).
-    script = None
-    if all_scripts:
-        for candidate in reversed(all_scripts):
-            has_result = "result_json" in candidate
-            has_data_read = any(
-                kw in candidate
-                for kw in ("csv_data", "json_data", "pd.read_csv", "json.loads")
-            )
-            if has_result and has_data_read:
-                script = candidate
-                break
-        if script is None:
-            # No single block is self-contained — concatenate all
-            script = "\n\n".join(all_scripts)
-
-    text_response = "\n".join(text_parts) if text_parts else (response.text or "")
-    return text_response, script
-
-
-@with_retry
 async def generate_with_search(
     prompt: str,
     image_parts: Optional[list] = None,
@@ -380,7 +321,5 @@ async def generate_structured(
     response = await _ensure_client().aio.models.generate_content(
         model=model_name, contents=parts, config=config
     )
-
-    import json
 
     return json.loads(response.text) if response.text else {}
