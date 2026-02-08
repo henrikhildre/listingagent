@@ -484,6 +484,27 @@ def _save_listing(path: Path, result: dict):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_specifics(raw) -> dict:
+    """Normalize item_specifics to a dict regardless of LLM output format.
+
+    Handles: dict (normal), list of {key, value} dicts, or anything else.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        out = {}
+        for item in raw:
+            if isinstance(item, dict) and "key" in item and "value" in item:
+                out[item["key"]] = item["value"]
+        return out
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Summary CSV
 # ---------------------------------------------------------------------------
 
@@ -533,12 +554,8 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
                     if isinstance(hashtags_list, list)
                     else str(hashtags_list)
                 )
-                specifics = listing.get("item_specifics", {})
-                specifics_str = (
-                    "; ".join(f"{k}: {v}" for k, v in specifics.items())
-                    if isinstance(specifics, dict)
-                    else str(specifics)
-                )
+                specifics = _normalize_specifics(listing.get("item_specifics"))
+                specifics_str = "; ".join(f"{k}: {v}" for k, v in specifics.items())
 
                 writer.writerow(
                     {
@@ -617,7 +634,7 @@ def generate_etsy_csv(job_id: str) -> Path:
             if not listing:
                 continue
             tags = listing.get("tags", [])
-            specifics = listing.get("item_specifics", {})
+            specifics = _normalize_specifics(listing.get("item_specifics"))
             materials = specifics.get("Material", specifics.get("Materials", ""))
 
             writer.writerow({
@@ -673,7 +690,7 @@ def generate_ebay_csv(job_id: str) -> Path:
             listing = result.get("listing") or {}
             if not listing:
                 continue
-            specifics = listing.get("item_specifics", {})
+            specifics = _normalize_specifics(listing.get("item_specifics"))
             price = listing.get("suggested_price", "")
             tags = listing.get("tags", [])
 
@@ -803,7 +820,7 @@ def generate_copy_paste_text(job_id: str) -> Path:
         if condition:
             lines.append(f"CONDITION: {condition}")
             lines.append("")
-        specifics = listing.get("item_specifics", {})
+        specifics = _normalize_specifics(listing.get("item_specifics"))
         if specifics:
             lines.append("ITEM SPECIFICS:")
             for k, v in specifics.items():

@@ -1239,6 +1239,17 @@ def _try_local_fix(script: str, errors: list[str]) -> str | None:
     is uncertain.
     """
     error_str = " ".join(errors)
+
+    # Fix 1: .applymap() was removed in pandas 2.0 → replace with .map()
+    if "applymap" in error_str:
+        fixed = script.replace(".applymap(", ".map(")
+        if fixed != script:
+            try:
+                ast.parse(fixed)
+                return fixed
+            except SyntaxError:
+                pass  # fall through to other fixes or LLM
+
     if "leading zeros" not in error_str:
         return None
 
