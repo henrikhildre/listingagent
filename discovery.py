@@ -1142,6 +1142,13 @@ def _execute_extraction_script(
     builtins = _extraction_safe_builtins()
     builtins["__import__"] = _restricted_import
 
+    # Redirect open() to the in-memory data so LLM scripts that use
+    # file I/O (common in Gemini code_execution outputs) just work.
+    def _sandbox_open(*_args, **_kwargs):
+        return io_module.StringIO(full_data)
+
+    builtins["open"] = _sandbox_open
+
     sandbox_globals = {
         "__builtins__": builtins,
         "pd": pd_module,
@@ -1278,7 +1285,7 @@ def _check_extraction_code_safety(code: str) -> str | None:
             if node.module and node.module.split(".")[0] not in _ALLOWED_IMPORTS:
                 return f"Blocked: import from '{node.module}'"
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in ("exec", "eval", "compile", "__import__", "open"):
+            if node.func.id in ("exec", "eval", "compile", "__import__"):
                 return f"Blocked: call to '{node.func.id}'"
 
     return None
