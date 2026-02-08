@@ -49,6 +49,8 @@ RULES:
      confirm whether the seller wants to keep them or have the AI re-estimate.
   5. Mandatory mentions — sustainability, shipping info, care instructions, etc.
   6. Description structure — paragraphs vs. bullet points, long vs. short.
+  7. Description length strictness — is the word count target a hard limit (listings \
+     MUST hit the range) or an approximate guideline (close enough is fine)?
 - Wrap up proactively as soon as you have enough information. Do NOT drag out \
   the conversation.
 
@@ -69,6 +71,7 @@ must match this exact schema:
   "brand_voice": "warm, conversational, empowering",
   "description_structure": "short intro paragraph + bullet point features + closing CTA",
   "avg_description_length": "medium (100-200 words)",
+  "description_word_count_strict": false,
   "pricing_strategy": "competitive with 2x markup from materials",
   "tags_style": "long-tail keywords, mix of specific and broad",
   "title_format": "Brand Name | Product Type - Key Feature - Material",
@@ -176,6 +179,7 @@ def _extract_style_profile(text: str) -> dict | None:
                 brand_voice=data.get("brand_voice", ""),
                 description_structure=data.get("description_structure", ""),
                 avg_description_length=data.get("avg_description_length", "medium"),
+                description_word_count_strict=data.get("description_word_count_strict", False),
                 pricing_strategy=data.get("pricing_strategy", "market rate"),
                 tags_style=data.get("tags_style", ""),
                 title_format=data.get("title_format", ""),

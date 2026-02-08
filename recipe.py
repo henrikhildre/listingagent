@@ -135,6 +135,61 @@ def save_recipe(job_id: str, recipe: dict):
 
 
 # ---------------------------------------------------------------------------
+# Helper: word count check + conversational fix-up
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+
+def _parse_word_count_range(style_profile: dict) -> tuple[int, int] | None:
+    """Extract (min, max) word count from avg_description_length.
+
+    Handles formats like "medium (100-200 words)", "75-150", "short (50-100)".
+    Returns None if no range can be parsed.
+    """
+    text = style_profile.get("avg_description_length", "")
+    match = _re.search(r"(\d+)\s*[-–]\s*(\d+)", text)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+async def _fix_word_count(
+    listing: dict,
+    word_count: int,
+    target_min: int,
+    target_max: int,
+    schema: dict,
+    image_parts: list | None = None,
+) -> dict:
+    """Ask the LLM to adjust description length via a short follow-up.
+
+    Sends the full listing back with a targeted instruction and returns
+    a complete listing object (same schema).
+    """
+    direction = "too short" if word_count < target_min else "too long"
+    target = target_min if word_count < target_min else target_max
+
+    prompt = (
+        f"Here is a product listing you just generated:\n\n"
+        f"{json.dumps(listing, indent=2)}\n\n"
+        f"The description is {word_count} words, which is {direction}. "
+        f"It should be between {target_min} and {target_max} words. "
+        f"Please adjust the description to be closer to {target} words "
+        f"while keeping the same tone, style, and information. "
+        f"Return the complete listing with all fields."
+    )
+
+    return await generate_structured(
+        prompt=prompt,
+        image_parts=image_parts,
+        schema=schema,
+        model=BATCH_MODEL,
+        thinking_level="low",
+    )
+
+
+# ---------------------------------------------------------------------------
 # 1. draft_recipe
 # ---------------------------------------------------------------------------
 
@@ -475,13 +530,29 @@ async def _test_single_product(
                 break
 
     # 3. Call Gemini with structured output
+    output_schema = recipe.get("output_schema", DEFAULT_OUTPUT_SCHEMA)
     listing = await generate_structured(
         prompt=filled_prompt,
         image_parts=image_parts if image_parts else None,
-        schema=recipe.get("output_schema", DEFAULT_OUTPUT_SCHEMA),
+        schema=output_schema,
         model=BATCH_MODEL,
         thinking_level="low",
     )
+
+    # 3b. Quick word count fix-up if description is outside target range
+    word_range = _parse_word_count_range(style_profile)
+    if word_range and style_profile.get("description_word_count_strict", False):
+        wc = len(listing.get("description", "").split())
+        wc_min, wc_max = word_range
+        if wc < wc_min or wc > wc_max:
+            logger.info(
+                "Description is %d words (target %d-%d), requesting fix-up",
+                wc, wc_min, wc_max,
+            )
+            listing = await _fix_word_count(
+                listing, wc, wc_min, wc_max, output_schema,
+                image_parts=image_parts if image_parts else None,
+            )
 
     # 4. Run code-based validation locally
     code_validation = run_validation(
@@ -492,7 +563,7 @@ async def _test_single_product(
     judge_result = await llm_judge_listing(listing, style_profile, product)
 
     # 6. Combine both validation layers
-    validation = combine_validation(code_validation, judge_result)
+    validation = combine_validation(code_validation, judge_result, style_profile)
 
     product_id = product.get("id", "unknown")
     logger.info(
@@ -1099,23 +1170,68 @@ async def llm_judge_listing(listing: dict, style_profile: dict, product: dict) -
     }
 
 
-def combine_validation(code_validation: dict, judge_result: dict) -> dict:
+def _is_word_count_issue(issue: str) -> bool:
+    """Check if a validation issue is about description word count."""
+    lower = issue.lower()
+    return "word" in lower and ("description" in lower or "short" in lower or "long" in lower)
+
+
+def soften_word_count_issues(validation: dict, style_profile: dict) -> dict:
+    """Downgrade word count issues to soft warnings when not strict.
+
+    Mutates nothing — returns a new validation dict.  When
+    description_word_count_strict is True (or absent), returns the
+    original unchanged.
+    """
+    if style_profile.get("description_word_count_strict", True):
+        return validation
+
+    issues = validation.get("issues", [])
+    hard = [i for i in issues if not _is_word_count_issue(i)]
+    soft = [f"⚠ {i}" for i in issues if _is_word_count_issue(i)]
+
+    score = max(0, 100 - len(hard) * 15)
+    return {
+        **validation,
+        "passed": len(hard) == 0,
+        "score": score,
+        "issues": hard + soft,
+    }
+
+
+def combine_validation(
+    code_validation: dict, judge_result: dict, style_profile: dict | None = None,
+) -> dict:
     """
     Combine code-based structural checks with LLM judge results.
 
     Scoring: 100 - (15 * code issues) - (12 * failed judge criteria).
     Passed = no code issues AND all LLM criteria pass.
+
+    When description_word_count_strict is False, word count issues are
+    shown as soft warnings — they don't affect the score or pass/fail.
     """
     code_issues = code_validation.get("issues", [])
     judge_criteria = judge_result.get("criteria", [])
 
+    strict_wc = (style_profile or {}).get("description_word_count_strict", True)
+
+    # Split word count issues from hard failures when not strict
+    if strict_wc:
+        hard_issues = code_issues
+        soft_issues = []
+    else:
+        hard_issues = [i for i in code_issues if not _is_word_count_issue(i)]
+        soft_issues = [f"⚠ {i}" for i in code_issues if _is_word_count_issue(i)]
+
     score = max(
         0,
-        100 - len(code_issues) * 15 - sum(12 for c in judge_criteria if not c["pass"]),
+        100 - len(hard_issues) * 15 - sum(12 for c in judge_criteria if not c["pass"]),
     )
 
     issues = [
-        *code_issues,
+        *hard_issues,
+        *soft_issues,
         *(
             f"[{c['criterion']}] {c['reasoning'][:120]}"
             for c in judge_criteria
@@ -1124,7 +1240,7 @@ def combine_validation(code_validation: dict, judge_result: dict) -> dict:
     ]
 
     return {
-        "passed": not code_issues and judge_result.get("all_passed", True),
+        "passed": not hard_issues and judge_result.get("all_passed", True),
         "score": score,
         "issues": issues,
         "code_issues": code_issues,

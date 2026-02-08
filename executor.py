@@ -40,10 +40,13 @@ from gemini_client import (
 from recipe import (
     fill_template,
     run_validation,
+    soften_word_count_issues,
     load_data_model,
     load_style_profile,
     load_recipe,
     DEFAULT_OUTPUT_SCHEMA,
+    _parse_word_count_range,
+    _fix_word_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,10 +154,29 @@ async def _process_product(
         logger.error("Gemini call failed for product %s: %s", product_id, e)
         return _failed_result(product_id, sku, image_filename, str(e))
 
+    # Quick word count fix-up before validation
+    word_range = _parse_word_count_range(style_profile)
+    if word_range and style_profile.get("description_word_count_strict", False):
+        wc = len(listing.get("description", "").split())
+        wc_min, wc_max = word_range
+        if wc < wc_min or wc > wc_max:
+            logger.info(
+                "Product %s description is %d words (target %d-%d), requesting fix-up",
+                product_id, wc, wc_min, wc_max,
+            )
+            try:
+                listing = await _fix_word_count(
+                    listing, wc, wc_min, wc_max, output_schema,
+                    image_parts=image_parts if image_parts else None,
+                )
+            except Exception as e:
+                logger.warning("Word count fix-up failed for %s: %s", product_id, e)
+
     # Validate
     validation = run_validation(
         listing, style_profile, recipe.get("validation_code", "")
     )
+    validation = soften_word_count_issues(validation, style_profile)
 
     if validation.get("passed", False):
         return {
@@ -242,6 +264,7 @@ async def _process_product(
     retry_validation = run_validation(
         listing, style_profile, recipe.get("validation_code", "")
     )
+    retry_validation = soften_word_count_issues(retry_validation, style_profile)
 
     return {
         "product_id": product_id,

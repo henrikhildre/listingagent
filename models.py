@@ -54,6 +54,7 @@ class StyleProfile(BaseModel):
     brand_voice: str
     description_structure: str
     avg_description_length: str
+    description_word_count_strict: bool = False
     pricing_strategy: str
     tags_style: str
     title_format: str
