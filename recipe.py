@@ -480,7 +480,7 @@ async def _test_single_product(
         image_parts=image_parts if image_parts else None,
         schema=recipe.get("output_schema", DEFAULT_OUTPUT_SCHEMA),
         model=BATCH_MODEL,
-        thinking_level="medium",
+        thinking_level="low",
     )
 
     # 4. Run code-based validation locally
