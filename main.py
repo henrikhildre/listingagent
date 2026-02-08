@@ -533,6 +533,32 @@ async def paste_text(req: PasteTextRequest):
 
 
 # ---------------------------------------------------------------------------
+# 1d. GET /api/preview-data/{job_id} — inspect uploaded data before discovery
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/preview-data/{job_id}")
+async def preview_data(job_id: str):
+    """Return a preview of uploaded files so the user can inspect before processing."""
+    _job_exists(job_id)
+    file_summary = await discovery.categorize_uploads(job_id)
+    return {"job_id": job_id, "preview": file_summary}
+
+
+@app.get("/api/job-image/{job_id}/{filename}")
+async def job_image(job_id: str, filename: str):
+    """Serve an uploaded image from a job's uploads directory."""
+    job_path = _job_exists(job_id)
+    safe_filename = Path(filename).name
+    if safe_filename != filename:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    image_path = job_path / "uploads" / safe_filename
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found.")
+    return FileResponse(str(image_path))
+
+
+# ---------------------------------------------------------------------------
 # 2. POST /api/discover
 # ---------------------------------------------------------------------------
 

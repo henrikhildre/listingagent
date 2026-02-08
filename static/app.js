@@ -525,8 +525,8 @@ async function uploadFiles() {
             return;
         }
 
-        // Transition to discovery (inline progress used inside startDiscovery)
-        await startDiscovery();
+        // Show data preview before starting discovery
+        await showDataPreview();
     } catch (error) {
         hideLoading();
         showToast('Upload failed: ' + error.message, 'error');
@@ -563,8 +563,8 @@ async function pasteAndExplore() {
         hideLoading();
         showToast(`Text received (${result.text_length.toLocaleString()} characters).`, 'success');
 
-        // Transition to discovery
-        await startDiscovery();
+        // Show data preview before starting discovery
+        await showDataPreview();
     } catch (error) {
         hideLoading();
         showToast('Failed to submit text: ' + error.message, 'error');
@@ -651,7 +651,7 @@ async function confirmDemoSelection(demoId, demoTitle) {
             return;
         }
 
-        await startDiscovery();
+        await showDataPreview();
     } catch (error) {
         hideLoading();
         showToast('Failed to load demo: ' + error.message, 'error');
@@ -771,6 +771,126 @@ function confirmNewJob() {
     if (fileInput) fileInput.value = '';
 
     showView('upload-view');
+}
+
+/**
+ * Fetch and display a data preview so the user can inspect input before processing.
+ */
+async function showDataPreview() {
+    try {
+        const data = await api(`/api/preview-data/${state.jobId}`);
+        const preview = data.preview;
+
+        let html = '<div class="data-preview-content">';
+
+        // Spreadsheet previews
+        if (preview.spreadsheet_previews) {
+            for (const [fname, sp] of Object.entries(preview.spreadsheet_previews)) {
+                if (sp.error) continue;
+                html += `<div class="preview-section">
+                    <div class="preview-section-title">${escapeHtml(fname)} <span class="preview-badge">${sp.total_rows} rows</span></div>
+                    <div class="preview-table-wrap">
+                        <table class="preview-table"><thead><tr>`;
+                for (const h of sp.headers || []) {
+                    html += `<th>${escapeHtml(h)}</th>`;
+                }
+                html += `</tr></thead><tbody>`;
+                for (const row of sp.rows || []) {
+                    html += '<tr>';
+                    for (const cell of row) {
+                        html += `<td>${escapeHtml(cell)}</td>`;
+                    }
+                    html += '</tr>';
+                }
+                html += `</tbody></table></div></div>`;
+            }
+        }
+
+        // JSON previews
+        if (preview.json_previews) {
+            for (const [fname, jp] of Object.entries(preview.json_previews)) {
+                if (jp.error) continue;
+                html += `<div class="preview-section">
+                    <div class="preview-section-title">${escapeHtml(fname)} <span class="preview-badge">${jp.total_rows} items</span></div>
+                    <div class="preview-table-wrap">
+                        <table class="preview-table"><thead><tr>`;
+                for (const h of jp.headers || []) {
+                    html += `<th>${escapeHtml(h)}</th>`;
+                }
+                html += `</tr></thead><tbody>`;
+                for (const row of jp.rows || []) {
+                    html += '<tr>';
+                    for (const cell of row) {
+                        html += `<td>${escapeHtml(cell)}</td>`;
+                    }
+                    html += '</tr>';
+                }
+                html += `</tbody></table></div></div>`;
+            }
+        }
+
+        // Pasted text
+        if (preview.pasted_text) {
+            const truncated = preview.pasted_text.length > 2000
+                ? preview.pasted_text.slice(0, 2000) + '...'
+                : preview.pasted_text;
+            html += `<div class="preview-section">
+                <div class="preview-section-title">Pasted Text <span class="preview-badge">${preview.pasted_text.length.toLocaleString()} chars</span></div>
+                <pre class="preview-text">${escapeHtml(truncated)}</pre>
+            </div>`;
+        }
+
+        // Image thumbnails
+        if (preview.images && preview.images.length > 0) {
+            html += `<div class="preview-section">
+                <div class="preview-section-title">Images <span class="preview-badge">${preview.images.length}</span></div>
+                <div class="preview-image-grid">`;
+            for (const img of preview.images) {
+                html += `<div class="preview-thumb">
+                    <img src="/api/job-image/${state.jobId}/${encodeURIComponent(img)}" alt="${escapeHtml(img)}" loading="lazy">
+                    <div class="preview-thumb-name">${escapeHtml(img)}</div>
+                </div>`;
+            }
+            html += `</div></div>`;
+        }
+
+        html += '</div>';
+
+        // Build the overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'data-preview-overlay';
+        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+        overlay.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col" style="animation: fadeInUp var(--transition-medium)">
+                <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-800">Data Preview</h2>
+                        <p class="text-sm text-slate-500 mt-0.5">${preview.summary || 'Review your input data before processing.'}</p>
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-6">
+                    ${html}
+                </div>
+                <div class="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+                    <button onclick="closeDataPreview(false)" class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition">Cancel</button>
+                    <button onclick="closeDataPreview(true)" class="px-5 py-2 text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition">Looks Good — Continue</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+    } catch (err) {
+        showToast('Failed to load preview: ' + err.message, 'error');
+        // Fall through to discovery on error
+        await startDiscovery();
+    }
+}
+
+function closeDataPreview(proceed) {
+    const overlay = document.getElementById('data-preview-overlay');
+    if (overlay) overlay.remove();
+    if (proceed) {
+        startDiscovery();
+    }
 }
 
 /**
