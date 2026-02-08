@@ -18,7 +18,11 @@ JOB_ROOT = Path("/tmp/jobs")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv", ".tsv"}
+JSON_EXTENSIONS = {".json"}
 DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx"}
+
+PASTED_TEXT_FILENAME = "user_input.txt"
+MAX_PASTE_LENGTH = 200_000  # characters
 
 
 def create_job_directory(job_id: str) -> Path:
@@ -54,7 +58,13 @@ def categorize_files(job_id: str) -> dict:
     """
     uploads_dir = get_job_path(job_id) / "uploads"
 
-    categories = {"images": [], "spreadsheets": [], "documents": [], "other": []}
+    categories = {
+        "images": [],
+        "spreadsheets": [],
+        "json_files": [],
+        "documents": [],
+        "other": [],
+    }
 
     if not uploads_dir.exists():
         return categories
@@ -70,6 +80,8 @@ def categorize_files(job_id: str) -> dict:
             categories["images"].append(filename)
         elif ext in SPREADSHEET_EXTENSIONS:
             categories["spreadsheets"].append(filename)
+        elif ext in JSON_EXTENSIONS:
+            categories["json_files"].append(filename)
         elif ext in DOCUMENT_EXTENSIONS:
             categories["documents"].append(filename)
         else:
@@ -253,3 +265,140 @@ def cleanup_job(job_id: str):
     job_path = get_job_path(job_id)
     if job_path.exists():
         shutil.rmtree(job_path)
+
+
+# ---------------------------------------------------------------------------
+# JSON file reading
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+
+def read_json_preview(filepath: Path, max_items: int = 5) -> dict:
+    """Read a JSON file and return a preview similar to spreadsheet preview.
+
+    Handles JSON arrays of objects (most common for product data), nested
+    objects with an array field, and single objects.
+
+    Returns: {"headers": [...], "rows": [[...], ...], "total_rows": int,
+              "format": "json_array"|"json_nested"|"json_object"}
+    """
+    with open(filepath, encoding="utf-8") as f:
+        data = _json.load(f)
+
+    items, array_key = _find_json_items(data)
+
+    if items is None:
+        if isinstance(data, dict):
+            headers = list(data.keys())
+            rows = [[str(data.get(h, "")) for h in headers]]
+            return {
+                "headers": headers,
+                "rows": rows,
+                "total_rows": 1,
+                "format": "json_object",
+            }
+        return {"headers": [], "rows": [], "total_rows": 0, "format": "unknown"}
+
+    total = len(items)
+    sample = items[:max_items]
+    headers = _json_headers(sample)
+    rows = [[str(item.get(h, "")) for h in headers] for item in sample if isinstance(item, dict)]
+
+    fmt = "json_nested" if array_key else "json_array"
+    result = {"headers": headers, "rows": rows, "total_rows": total, "format": fmt}
+    if array_key:
+        result["array_key"] = array_key
+    return result
+
+
+def read_json_sample(filepath: Path, max_sample: int = 15) -> dict:
+    """Read a strategic sample from a JSON file for LLM script development.
+
+    Same sampling strategy as spreadsheets: first 5, random middle 5, last 5.
+    Returns: {"headers": [...], "sample_json": "...", "total_rows": int}
+    """
+    with open(filepath, encoding="utf-8") as f:
+        data = _json.load(f)
+
+    items, array_key = _find_json_items(data)
+
+    if items is None:
+        return {
+            "headers": list(data.keys()) if isinstance(data, dict) else [],
+            "sample_json": _json.dumps(data, ensure_ascii=False, indent=2),
+            "total_rows": 1 if isinstance(data, dict) else 0,
+            "array_key": array_key,
+        }
+
+    total = len(items)
+    if total <= max_sample:
+        sample = items
+    else:
+        head = items[:5]
+        tail = items[-5:]
+        middle_pool = list(range(5, total - 5))
+        middle_indices = sorted(random.sample(middle_pool, min(5, len(middle_pool))))
+        middle = [items[i] for i in middle_indices]
+        sample = head + middle + tail
+
+    headers = _json_headers(sample)
+    return {
+        "headers": headers,
+        "sample_json": _json.dumps(sample, ensure_ascii=False, indent=2),
+        "total_rows": total,
+        "array_key": array_key,
+    }
+
+
+def read_full_json(filepath: Path) -> str:
+    """Read the full JSON file as a string for server-side script execution."""
+    return filepath.read_text(encoding="utf-8")
+
+
+def _find_json_items(data) -> tuple[list | None, str | None]:
+    """Find the product array in a JSON structure.
+
+    Returns (items_list_or_None, array_key_or_None).
+    """
+    if isinstance(data, list):
+        return data, None
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                return value, key
+    return None, None
+
+
+def _json_headers(items: list) -> list[str]:
+    """Collect ordered unique keys from a list of dicts."""
+    seen = set()
+    headers = []
+    for item in items:
+        if isinstance(item, dict):
+            for key in item:
+                if key not in seen:
+                    seen.add(key)
+                    headers.append(key)
+    return headers
+
+
+# ---------------------------------------------------------------------------
+# Pasted text helpers
+# ---------------------------------------------------------------------------
+
+
+def save_pasted_text(job_id: str, text: str) -> Path:
+    """Save user-pasted text to the job directory."""
+    job_path = get_job_path(job_id)
+    filepath = job_path / PASTED_TEXT_FILENAME
+    filepath.write_text(text, encoding="utf-8")
+    return filepath
+
+
+def get_pasted_text(job_id: str) -> str | None:
+    """Read pasted text from the job directory, or None if not present."""
+    filepath = get_job_path(job_id) / PASTED_TEXT_FILENAME
+    if filepath.exists():
+        return filepath.read_text(encoding="utf-8")
+    return None

@@ -87,41 +87,84 @@
 
                 <!-- Heading -->
                 <div class="text-center mb-10">
-                    <h2 class="text-3xl font-bold text-slate-900 mb-3">Upload your products</h2>
+                    <h2 class="text-3xl font-bold text-slate-900 mb-3">Add your products</h2>
                     <p class="text-slate-500 text-base leading-relaxed">
-                        Drop your spreadsheets, images, or any product data. We'll figure out the structure and help you create marketplace listings at scale.
+                        Upload files, paste product data, or drop in images. We'll figure out the structure and create marketplace listings at scale.
                     </p>
                 </div>
 
-                <!-- Drop Zone -->
-                <div id="drop-zone" class="drop-zone mb-6">
-                    <div class="drop-zone-icon">
-                        <svg class="w-12 h-12 mx-auto text-slate-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                <!-- Input Mode Tabs -->
+                <div class="flex rounded-xl bg-slate-100 p-1 mb-6" id="input-mode-tabs">
+                    <button id="tab-upload" class="input-tab input-tab-active flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2" onclick="switchInputMode('upload')">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
                         </svg>
-                    </div>
-                    <p class="text-slate-700 font-medium mb-1">Drag and drop files here</p>
-                    <p class="text-slate-400 text-sm mb-4">Spreadsheets, images, CSVs, or ZIP archives</p>
-                    <label class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition cursor-pointer">
+                        Upload Files
+                    </button>
+                    <button id="tab-paste" class="input-tab flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2 text-slate-500" onclick="switchInputMode('paste')">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z"/>
                         </svg>
-                        Browse files
-                        <input id="file-input" type="file" multiple class="hidden">
-                    </label>
+                        Paste Text
+                    </button>
                 </div>
 
-                <!-- File List -->
-                <ul id="file-list" class="file-list mb-8"></ul>
+                <!-- Upload Mode -->
+                <div id="upload-mode">
+                    <!-- Drop Zone -->
+                    <div id="drop-zone" class="drop-zone mb-6">
+                        <div class="drop-zone-icon">
+                            <svg class="w-12 h-12 mx-auto text-slate-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+                            </svg>
+                        </div>
+                        <p class="text-slate-700 font-medium mb-1">Drag and drop files here</p>
+                        <p class="text-slate-400 text-sm mb-4">Spreadsheets, images, CSVs, JSON, or ZIP archives</p>
+                        <label class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition cursor-pointer">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
+                            </svg>
+                            Browse files
+                            <input id="file-input" type="file" multiple class="hidden">
+                        </label>
+                    </div>
 
-                <!-- Explore Button -->
-                <button id="explore-btn" disabled
-                    class="btn-primary w-full py-3 px-6 rounded-xl font-semibold text-base flex items-center justify-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
-                    </svg>
-                    Explore My Data
-                </button>
+                    <!-- File List -->
+                    <ul id="file-list" class="file-list mb-8"></ul>
+
+                    <!-- Explore Button (upload mode) -->
+                    <button id="explore-btn" disabled
+                        class="btn-primary w-full py-3 px-6 rounded-xl font-semibold text-base flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+                        </svg>
+                        Explore My Data
+                    </button>
+                </div>
+
+                <!-- Paste Mode (hidden by default) -->
+                <div id="paste-mode" class="hidden">
+                    <div class="relative mb-2">
+                        <textarea id="paste-input"
+                            rows="10"
+                            placeholder="Paste your product data here...&#10;&#10;Examples:&#10;- Inventory lists or spreadsheet rows&#10;- Product descriptions&#10;- JSON data&#10;- Existing marketplace listings&#10;- Any text with product information"
+                            class="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition font-mono min-h-[200px] max-h-[400px]"
+                        ></textarea>
+                    </div>
+                    <div class="flex items-center justify-between mb-6">
+                        <span id="paste-char-count" class="text-xs text-slate-400">0 characters</span>
+                        <span class="text-xs text-slate-400">Max 200,000 characters</span>
+                    </div>
+
+                    <!-- Explore Button (paste mode) -->
+                    <button id="paste-explore-btn" disabled
+                        class="btn-primary w-full py-3 px-6 rounded-xl font-semibold text-base flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+                        </svg>
+                        Explore My Data
+                    </button>
+                </div>
 
                 <!-- Divider -->
                 <div class="flex items-center gap-3 my-4">

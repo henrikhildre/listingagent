@@ -292,7 +292,7 @@ function updatePhaseIndicator(phase) {
 // ============================================================================
 
 /**
- * Initialize drag-and-drop and file input handlers.
+ * Initialize drag-and-drop, file input, and paste input handlers.
  */
 function initUpload() {
     const dropZone = document.getElementById('drop-zone');
@@ -333,6 +333,56 @@ function initUpload() {
             handleFiles(fileInput.files);
         }
     });
+
+    // Paste input handlers
+    const pasteInput = document.getElementById('paste-input');
+    const pasteExploreBtn = document.getElementById('paste-explore-btn');
+    const pasteCharCount = document.getElementById('paste-char-count');
+
+    if (pasteInput) {
+        pasteInput.addEventListener('input', () => {
+            const len = pasteInput.value.length;
+            if (pasteCharCount) {
+                pasteCharCount.textContent = `${len.toLocaleString()} characters`;
+                pasteCharCount.classList.toggle('text-red-500', len > 200000);
+                pasteCharCount.classList.toggle('text-slate-400', len <= 200000);
+            }
+            if (pasteExploreBtn) {
+                pasteExploreBtn.disabled = len === 0 || len > 200000;
+            }
+        });
+    }
+}
+
+/**
+ * Switch between upload and paste input modes.
+ */
+function switchInputMode(mode) {
+    const uploadMode = document.getElementById('upload-mode');
+    const pasteMode = document.getElementById('paste-mode');
+    const tabUpload = document.getElementById('tab-upload');
+    const tabPaste = document.getElementById('tab-paste');
+
+    if (!uploadMode || !pasteMode) return;
+
+    if (mode === 'paste') {
+        uploadMode.classList.add('hidden');
+        pasteMode.classList.remove('hidden');
+        tabUpload.classList.remove('input-tab-active');
+        tabUpload.classList.add('text-slate-500');
+        tabPaste.classList.add('input-tab-active');
+        tabPaste.classList.remove('text-slate-500');
+        // Focus the textarea
+        const pasteInput = document.getElementById('paste-input');
+        if (pasteInput) pasteInput.focus();
+    } else {
+        uploadMode.classList.remove('hidden');
+        pasteMode.classList.add('hidden');
+        tabUpload.classList.add('input-tab-active');
+        tabUpload.classList.remove('text-slate-500');
+        tabPaste.classList.remove('input-tab-active');
+        tabPaste.classList.add('text-slate-500');
+    }
 }
 
 /**
@@ -415,6 +465,44 @@ async function uploadFiles() {
     } catch (error) {
         hideLoading();
         showToast('Upload failed: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Submit pasted text and start discovery.
+ */
+async function pasteAndExplore() {
+    const pasteInput = document.getElementById('paste-input');
+    if (!pasteInput) return;
+
+    const text = pasteInput.value.trim();
+    if (!text) {
+        showToast('Please paste some text first.', 'error');
+        return;
+    }
+
+    if (text.length > 200000) {
+        showToast('Text exceeds 200,000 character limit.', 'error');
+        return;
+    }
+
+    showLoading('Processing pasted text...');
+
+    try {
+        const result = await api('/api/paste', {
+            method: 'POST',
+            body: JSON.stringify({ text }),
+        });
+
+        state.jobId = result.job_id;
+        hideLoading();
+        showToast(`Text received (${result.text_length.toLocaleString()} characters).`, 'success');
+
+        // Transition to discovery
+        await startDiscovery();
+    } catch (error) {
+        hideLoading();
+        showToast('Failed to submit text: ' + error.message, 'error');
     }
 }
 
@@ -1179,11 +1267,7 @@ async function testRecipe() {
         state.testResults = result.test_results || [];
 
         const summary = buildRecipeTestSummary(state.testResults);
-        if (summary.html) {
-            addMessage('assistant', summary.content, { html: true });
-        } else {
-            addMessage('assistant', summary.content || summary);
-        }
+        addMessage('assistant', summary.content, { html: summary.html });
         state.conversationHistory.push({
             role: 'assistant',
             content: 'Re-tested recipe on sample products.',
@@ -2255,6 +2339,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             uploadFiles();
         });
     }
+
+    // Paste explore button
+    document.getElementById('paste-explore-btn')?.addEventListener('click', pasteAndExplore);
 
     // Demo button: load sample data and start discovery
     document.getElementById('demo-btn')?.addEventListener('click', loadDemo);

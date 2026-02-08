@@ -873,6 +873,129 @@ button:not(:disabled):active {
 }
 
 /* ============================================
+   INPUT MODE TABS (Upload / Paste toggle)
+   ============================================ */
+.input-tab {
+    cursor: pointer;
+    user-select: none;
+}
+
+.input-tab-active {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* Test result cards in chat */
+.test-result-card {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.test-result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.test-result-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--color-text);
+}
+
+.test-result-score {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: white;
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+}
+
+.test-result-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--color-text);
+    margin-bottom: 0.3rem;
+    font-style: italic;
+}
+
+.test-result-description {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+    margin-bottom: 0.5rem;
+}
+
+.test-result-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-bottom: 0.5rem;
+}
+
+.test-result-tag {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    background: #f1f5f9;
+    border-radius: 0.25rem;
+    color: var(--color-text-secondary);
+}
+
+.test-result-price {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.test-result-criteria {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.5rem;
+}
+
+.test-result-criterion {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.criterion-pass {
+    background: #dcfce7;
+    color: #16a34a;
+}
+
+.criterion-fail {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.test-result-issues {
+    margin-top: 0.5rem;
+}
+
+.test-result-issue {
+    display: block;
+    font-size: 0.75rem;
+    color: #dc2626;
+    margin-bottom: 0.15rem;
+}
+
+.test-result-avg {
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-text-secondary);
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--color-border);
+    margin-top: 0.5rem;
+}
+
+/* ============================================
    RESPONSIVE ADJUSTMENTS
    ============================================ */
 @media (max-width: 768px) {
