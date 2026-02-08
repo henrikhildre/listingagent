@@ -308,6 +308,10 @@ A JSON schema for the structured output. Use this default as a starting
 point but customize if needed:
 {json.dumps(DEFAULT_OUTPUT_SCHEMA, indent=2)}
 
+IMPORTANT: Every "type": "object" MUST have a non-empty "properties" dict.
+Bare objects without properties are rejected. For item_specifics, define
+the specific attribute names as properties (e.g. "Brand", "Color", "Material").
+
 ### 3. Validation Code
 Write a Python function called `validate_listing(listing, style_profile)`
 that checks the quality of a generated listing. It should return a dict with:
