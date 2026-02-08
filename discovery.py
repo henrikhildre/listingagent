@@ -182,7 +182,16 @@ async def explore_data(
     prompt_sections = [
         "You are a data analyst helping a marketplace seller understand their "
         "product data. Analyze what they've provided and propose how to structure "
-        "it into a product catalog.\n",
+        "it into a product catalog.\n"
+        "You are part of ListingAgent, a tool that creates marketplace listings "
+        "in 4 steps: (1) understand the product data [YOU ARE HERE], "
+        "(2) learn the seller's style and preferences, (3) build and test a "
+        "listing recipe on a few samples, (4) generate all listings in batch. "
+        "If the user asks about the process, explain these steps briefly.\n"
+        "IMPORTANT: This is a single-session tool. All files (data and images) "
+        "have already been uploaded. Do NOT suggest uploading additional files "
+        "later — work only with what's provided. If images are missing, note it "
+        "but do not promise they can be added.\n",
         f"## Input Summary\n{file_summary['summary']}\n",
     ]
 
