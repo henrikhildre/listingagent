@@ -49,8 +49,6 @@ RULES:
      confirm whether the seller wants to keep them or have the AI re-estimate.
   5. Mandatory mentions — sustainability, shipping info, care instructions, etc.
   6. Description structure — paragraphs vs. bullet points, long vs. short.
-  7. Description length strictness — is the word count target a hard limit (listings \
-     MUST hit the range) or an approximate guideline (close enough is fine)?
 - Wrap up proactively as soon as you have enough information. Do NOT drag out \
   the conversation.
 
