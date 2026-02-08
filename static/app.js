@@ -1163,83 +1163,41 @@ function buildRecipeTestSummary(testResults) {
         return { html: false, content: 'I drafted a recipe but could not test it on any samples. You can approve it or provide feedback.' };
     }
 
-    const esc = s => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
     let cards = '<p style="margin-bottom:0.75rem">Here are the test results for the recipe:</p>';
 
     testResults.forEach((tr, i) => {
-        const name = esc(tr.product_name || tr.product_id || `Sample ${i + 1}`);
+        const name = escapeHtml(tr.product_name || tr.product_id || `Sample ${i + 1}`);
         const score = tr.validation?.score ?? '?';
         const passed = tr.validation?.passed;
-        const title = esc(tr.listing?.title || '(no title generated)');
+        const title = escapeHtml(tr.listing?.title || '(no title generated)');
         const description = tr.listing?.description || '';
-        const tags = tr.listing?.tags || [];
-        const judgeCriteria = tr.validation?.judge_criteria || [];
-        const codeIssues = tr.validation?.code_issues || [];
-
-        const badgeColor = passed ? '#059669' : '#d97706';
-        const badgeLabel = passed ? 'Passed' : 'Needs work';
 
         let card = `<div class="test-result-card">`;
-
-        // Header: name + score badge
         card += `<div class="test-result-header">`;
         card += `<span class="test-result-name">${name}</span>`;
-        card += `<span class="test-result-score" style="background:${badgeColor}">${score}/100 &middot; ${badgeLabel}</span>`;
+        card += scoreBadgeHtml(score, passed);
         card += `</div>`;
-
-        // Title
         card += `<div class="test-result-title">${title}</div>`;
 
-        // Description preview
         if (description) {
             const preview = description.length > 250
-                ? esc(description.slice(0, 250)) + '&hellip;'
-                : esc(description);
+                ? escapeHtml(description.slice(0, 250)) + '&hellip;'
+                : escapeHtml(description);
             card += `<div class="test-result-description">${preview}</div>`;
         }
 
-        // Tags
-        if (tags.length > 0) {
-            card += `<div class="test-result-tags">`;
-            for (const tag of tags) {
-                card += `<span class="test-result-tag">${esc(tag)}</span>`;
-            }
-            card += `</div>`;
-        }
+        card += tagPillsHtml(tr.listing?.tags, 'chat');
 
-        // Price
         if (tr.listing?.suggested_price) {
-            card += `<div class="test-result-price">$${esc(String(tr.listing.suggested_price))}</div>`;
+            card += `<div class="test-result-price">$${escapeHtml(String(tr.listing.suggested_price))}</div>`;
         }
 
-        // Judge criteria badges
-        if (judgeCriteria.length > 0) {
-            card += `<div class="test-result-criteria">`;
-            for (const c of judgeCriteria) {
-                const cls = c.pass ? 'criterion-pass' : 'criterion-fail';
-                const icon = c.pass ? '&#10003;' : '&#10007;';
-                const label = (c.label || c.criterion || '').replace(/_/g, ' ');
-                const tip = c.pass ? '' : ` title="${esc(c.reasoning?.slice(0, 150))}"`;
-                card += `<span class="test-result-criterion ${cls}"${tip}>${icon} ${esc(label)}</span>`;
-            }
-            card += `</div>`;
-        }
-
-        // Structural issues
-        if (codeIssues.length > 0) {
-            card += `<div class="test-result-issues">`;
-            for (const issue of codeIssues) {
-                card += `<span class="test-result-issue">&#9888; ${esc(issue)}</span>`;
-            }
-            card += `</div>`;
-        }
-
+        card += criteriaBadgesHtml(tr.validation?.judge_criteria, 'chat');
+        card += codeIssuesHtml(tr.validation?.code_issues, 'chat');
         card += `</div>`;
         cards += card;
     });
 
-    // Average score footer
     const avgScore = Math.round(testResults.reduce((sum, tr) => sum + (tr.validation?.score || 0), 0) / testResults.length);
     cards += `<div class="test-result-avg">Average score: <strong>${avgScore}/100</strong></div>`;
     cards += `<p style="margin-top:0.5rem;color:var(--color-text-secondary);font-size:0.85rem">Review the full results in the right panel. You can approve the recipe or give me feedback to refine it.</p>`;
@@ -1642,6 +1600,95 @@ function escapeHtml(text) {
 }
 
 /**
+ * Generate a copy-to-clipboard button. `copyExpr` is a JS expression that
+ * evaluates to the string to copy (e.g. a quoted literal or a DOM lookup).
+ */
+function copyButtonHtml(copyExpr) {
+    return `<button class="copy-btn" onclick="copyToClipboard(${copyExpr}, this)">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
+        Copy
+    </button>`;
+}
+
+/**
+ * Render a score badge with appropriate color.
+ */
+function scoreBadgeHtml(score, passed) {
+    const color = passed ? '#059669' : '#d97706';
+    const label = passed ? 'Passed' : 'Needs work';
+    return `<span class="test-result-score" style="background:${color}">${score}/100 &middot; ${label}</span>`;
+}
+
+/**
+ * Render judge criteria as inline badges.
+ */
+function criteriaBadgesHtml(judgeCriteria, style = 'chat') {
+    if (!judgeCriteria || judgeCriteria.length === 0) return '';
+
+    if (style === 'panel') {
+        const passed = judgeCriteria.filter(c => c.pass).length;
+        return `
+            <div class="mt-2 pt-2 border-t border-slate-100">
+                <div class="text-[10px] text-slate-400 mb-1 uppercase tracking-wide">Quality ${passed}/${judgeCriteria.length}</div>
+                <div class="flex flex-wrap gap-1">
+                    ${judgeCriteria.map(c => {
+                        const color = c.pass ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600';
+                        const icon = c.pass ? '&#10003;' : '&#10007;';
+                        const label = c.criterion.replace(/_/g, ' ');
+                        return `<span class="text-[10px] px-1.5 py-0.5 rounded ${color}" title="${escapeHtml(c.reasoning || '')}">${icon} ${label}</span>`;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // chat style
+    return `<div class="test-result-criteria">
+        ${judgeCriteria.map(c => {
+            const cls = c.pass ? 'criterion-pass' : 'criterion-fail';
+            const icon = c.pass ? '&#10003;' : '&#10007;';
+            const label = (c.label || c.criterion || '').replace(/_/g, ' ');
+            const tip = c.pass ? '' : ` title="${escapeHtml(c.reasoning?.slice(0, 150))}"`;
+            return `<span class="test-result-criterion ${cls}"${tip}>${icon} ${escapeHtml(label)}</span>`;
+        }).join('')}
+    </div>`;
+}
+
+/**
+ * Render code/structural issues as warning badges.
+ */
+function codeIssuesHtml(issues, style = 'chat') {
+    if (!issues || issues.length === 0) return '';
+
+    if (style === 'panel') {
+        return `<div class="mt-1.5 space-y-0.5">
+            ${issues.map(i => `<div class="text-[10px] text-red-500">- ${escapeHtml(i)}</div>`).join('')}
+        </div>`;
+    }
+
+    return `<div class="test-result-issues">
+        ${issues.map(issue => `<span class="test-result-issue">&#9888; ${escapeHtml(issue)}</span>`).join('')}
+    </div>`;
+}
+
+/**
+ * Render tags as small pills.
+ */
+function tagPillsHtml(tags, style = 'chat') {
+    if (!tags || tags.length === 0) return '';
+
+    if (style === 'panel') {
+        return `<div class="flex flex-wrap gap-1 mb-2">${tags.slice(0, 8).map(t =>
+            `<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">${escapeHtml(t)}</span>`
+        ).join('')}${tags.length > 8 ? `<span class="text-[10px] text-slate-400">+${tags.length - 8}</span>` : ''}</div>`;
+    }
+
+    return `<div class="test-result-tags">
+        ${tags.map(tag => `<span class="test-result-tag">${escapeHtml(tag)}</span>`).join('')}
+    </div>`;
+}
+
+/**
  * Fallback polling for when WebSocket is unavailable.
  */
 function startPolling() {
@@ -1733,6 +1780,47 @@ function renderFileContextSection(categories) {
 }
 
 /**
+ * Render a single field completeness bar for the context panel.
+ */
+function renderFieldBar(field, completeness, stats) {
+    const pct = completeness.pct ?? 100;
+    let detail = '';
+    if (stats.type === 'numeric') {
+        detail = `${stats.min}–${stats.max}`;
+    } else if (stats.unique_count) {
+        detail = `${stats.unique_count} unique`;
+    }
+    const barColor = pct === 100 ? 'bg-green-400' : pct >= 80 ? 'bg-blue-400' : 'bg-amber-400';
+    return `
+        <div class="flex items-center gap-2 py-0.5">
+            <span class="text-xs text-slate-500 w-24 truncate" title="${escapeHtml(field)}">${escapeHtml(field)}</span>
+            <div class="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div class="${barColor} h-full rounded-full" style="width:${pct}%"></div>
+            </div>
+            <span class="text-xs text-slate-400 w-16 text-right">${detail || pct + '%'}</span>
+        </div>
+    `;
+}
+
+/**
+ * Render a single product row for the context panel.
+ */
+function renderProductRow(product, nameField) {
+    const name = product[nameField] || product.name || product.sku || product.id;
+    const hasImage = product.image_files && product.image_files.length > 0;
+    const imageIcon = hasImage
+        ? '<svg class="w-3 h-3 text-green-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
+        : '<svg class="w-3 h-3 text-slate-300 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>';
+
+    return `
+        <div class="context-item flex items-center gap-2 min-w-0">
+            ${imageIcon}
+            <span class="text-sm truncate">${escapeHtml(String(name))}</span>
+        </div>
+    `;
+}
+
+/**
  * Render data model info in context panel.
  */
 function renderDataModelSection() {
@@ -1744,73 +1832,37 @@ function renderDataModelSection() {
     const fieldStats = state.dataModel.field_stats || {};
     const fieldsDiscovered = state.dataModel.fields_discovered || [];
 
-    // -- Field completeness bars --
+    // Field completeness bars
     let fieldsHtml = '';
     if (fieldsDiscovered.length > 0) {
         const fieldCompleteness = qr.field_completeness || {};
-        fieldsDiscovered.slice(0, 10).forEach(field => {
-            const info = fieldCompleteness[field] || {};
-            const pct = info.pct ?? 100;
-            const stats = fieldStats[field] || {};
-            let detail = '';
-            if (stats.type === 'numeric') {
-                detail = `${stats.min}–${stats.max}`;
-            } else if (stats.unique_count) {
-                detail = `${stats.unique_count} unique`;
-            }
-            const barColor = pct === 100 ? 'bg-green-400' : pct >= 80 ? 'bg-blue-400' : 'bg-amber-400';
-            fieldsHtml += `
-                <div class="flex items-center gap-2 py-0.5">
-                    <span class="text-xs text-slate-500 w-24 truncate" title="${escapeHtml(field)}">${escapeHtml(field)}</span>
-                    <div class="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div class="${barColor} h-full rounded-full" style="width:${pct}%"></div>
-                    </div>
-                    <span class="text-xs text-slate-400 w-16 text-right">${detail || pct + '%'}</span>
-                </div>
-            `;
-        });
+        fieldsHtml = fieldsDiscovered.slice(0, 10)
+            .map(f => renderFieldBar(f, fieldCompleteness[f] || {}, fieldStats[f] || {}))
+            .join('');
         if (fieldsDiscovered.length > 10) {
             fieldsHtml += `<div class="text-xs text-slate-400 text-center py-1">+ ${fieldsDiscovered.length - 10} more fields</div>`;
         }
     }
 
-    // -- Product list --
-    let productsHtml = '';
-    const displayProducts = products.slice(0, 8);
-    // Find a good display name: try first non-id/source/image_files text field
+    // Product list
     const nameField = fieldsDiscovered.find(f => {
         const s = fieldStats[f];
         return s && s.type === 'text';
     });
-    displayProducts.forEach(p => {
-        const name = p[nameField] || p.name || p.sku || p.id;
-        const hasImage = p.image_files && p.image_files.length > 0;
-        const imageIcon = hasImage
-            ? '<svg class="w-3 h-3 text-green-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
-            : '<svg class="w-3 h-3 text-slate-300 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>';
-
-        productsHtml += `
-            <div class="context-item flex items-center gap-2 min-w-0">
-                ${imageIcon}
-                <span class="text-sm truncate">${escapeHtml(String(name))}</span>
-            </div>
-        `;
-    });
-
+    let productsHtml = products.slice(0, 8)
+        .map(p => renderProductRow(p, nameField))
+        .join('');
     if (products.length > 8) {
         productsHtml += `<div class="text-xs text-slate-400 text-center py-2">+ ${products.length - 8} more products</div>`;
     }
 
-    // -- Warnings --
-    let warningsHtml = '';
+    // Warnings
     const warnings = qr.warnings || [];
-    if (warnings.length > 0) {
-        warningsHtml = warnings.map(w => `
-            <div class="context-item bg-amber-50 border-amber-200">
-                <span class="text-xs text-amber-700">${escapeHtml(w)}</span>
-            </div>
-        `).join('');
-    }
+    const warningsHtml = warnings.map(w => `
+        <div class="context-item bg-amber-50 border-amber-200">
+            <span class="text-xs text-amber-700">${escapeHtml(w)}</span>
+        </div>
+    `).join('');
 
     let unmatchedHtml = '';
     if (unmatched.length > 0 && !warnings.length) {
@@ -1910,61 +1962,19 @@ function renderTestResultsSection() {
             ? '<span class="badge badge-success text-xs">Passed</span>'
             : '<span class="badge badge-error text-xs">Needs work</span>';
 
-        // Title
         const titleHtml = listing.title
             ? `<div class="text-xs font-medium text-slate-700 mb-1">"${escapeHtml(listing.title)}"</div>`
             : '';
 
-        // Description preview (truncated)
         const desc = listing.description || '';
         const descPreview = desc.length > 150 ? desc.slice(0, 150) + '...' : desc;
         const descHtml = desc
             ? `<div class="text-xs text-slate-500 mb-2 leading-relaxed">${escapeHtml(descPreview)}</div>`
             : '';
 
-        // Tags
-        const tags = listing.tags || [];
-        const tagsHtml = tags.length > 0
-            ? `<div class="flex flex-wrap gap-1 mb-2">${tags.slice(0, 8).map(t =>
-                `<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">${escapeHtml(t)}</span>`
-            ).join('')}${tags.length > 8 ? `<span class="text-[10px] text-slate-400">+${tags.length - 8}</span>` : ''}</div>`
-            : '';
-
-        // Price
         const priceHtml = listing.suggested_price
             ? `<div class="text-xs text-slate-500 mb-2">Price: <span class="font-semibold text-slate-700">$${listing.suggested_price}</span></div>`
             : '';
-
-        // Judge criteria badges
-        const judgeCriteria = tr.validation?.judge_criteria || [];
-        let judgeHtml = '';
-        if (judgeCriteria.length > 0) {
-            const judgePassed = judgeCriteria.filter(c => c.pass).length;
-            judgeHtml = `
-                <div class="mt-2 pt-2 border-t border-slate-100">
-                    <div class="text-[10px] text-slate-400 mb-1 uppercase tracking-wide">Quality ${judgePassed}/${judgeCriteria.length}</div>
-                    <div class="flex flex-wrap gap-1">
-                        ${judgeCriteria.map(c => {
-                            const color = c.pass ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600';
-                            const icon = c.pass ? '&#10003;' : '&#10007;';
-                            const label = c.criterion.replace(/_/g, ' ');
-                            return `<span class="text-[10px] px-1.5 py-0.5 rounded ${color}" title="${escapeHtml(c.reasoning || '')}">${icon} ${label}</span>`;
-                        }).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        // Structural issues
-        const codeIssues = tr.validation?.code_issues || [];
-        let codeIssuesHtml = '';
-        if (codeIssues.length > 0) {
-            codeIssuesHtml = `
-                <div class="mt-1.5 space-y-0.5">
-                    ${codeIssues.map(i => `<div class="text-[10px] text-red-500">- ${escapeHtml(i)}</div>`).join('')}
-                </div>
-            `;
-        }
 
         cardsHtml += `
             <div class="context-item">
@@ -1974,11 +1984,11 @@ function renderTestResultsSection() {
                 </div>
                 ${titleHtml}
                 ${descHtml}
-                ${tagsHtml}
+                ${tagPillsHtml(listing.tags, 'panel')}
                 ${priceHtml}
                 ${statusBadge}
-                ${codeIssuesHtml}
-                ${judgeHtml}
+                ${codeIssuesHtml(tr.validation?.code_issues, 'panel')}
+                ${criteriaBadgesHtml(tr.validation?.judge_criteria, 'panel')}
             </div>
         `;
     });
@@ -2077,14 +2087,12 @@ function openListingDetail(result) {
     const specifics = listing.item_specifics || {};
     let specificsHtml = '';
     if (Object.keys(specifics).length > 0) {
+        const specificsText = Object.entries(specifics).map(([k,v]) => `${k}: ${v}`).join('\\n');
         specificsHtml = `
             <div class="listing-modal-section">
                 <div class="listing-modal-section-title">
                     <span>Item Specifics</span>
-                    <button class="copy-btn" onclick="copyToClipboard(\`${Object.entries(specifics).map(([k,v]) => `${k}: ${v}`).join('\\n')}\`, this)">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
-                        Copy
-                    </button>
+                    ${copyButtonHtml(`\`${specificsText}\``)}
                 </div>
                 <div class="specifics-grid">
                     ${Object.entries(specifics).map(([k, v]) => `
@@ -2107,10 +2115,7 @@ function openListingDetail(result) {
             <div class="listing-modal-section">
                 <div class="listing-modal-section-title">
                     <span>Hashtags (${hashtags.length})</span>
-                    <button class="copy-btn" onclick="copyToClipboard('${hashtagStr.replace(/'/g, "\\'")}', this)">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
-                        Copy
-                    </button>
+                    ${copyButtonHtml(`'${hashtagStr.replace(/'/g, "\\'")}'`)}
                 </div>
                 <div class="flex flex-wrap gap-1">
                     ${hashtags.map(h => `<span class="hashtag-pill">#${esc(h)}</span>`).join('')}
@@ -2127,10 +2132,7 @@ function openListingDetail(result) {
             <div class="listing-modal-section">
                 <div class="listing-modal-section-title">
                     <span>Social Media Caption</span>
-                    <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-caption-text').textContent, this)">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
-                        Copy
-                    </button>
+                    ${copyButtonHtml("document.getElementById('modal-caption-text').textContent")}
                 </div>
                 <div class="listing-modal-section-content" id="modal-caption-text">${esc(caption)}</div>
             </div>
@@ -2145,10 +2147,7 @@ function openListingDetail(result) {
             <div class="listing-modal-section">
                 <div class="listing-modal-section-title">
                     <span>Condition</span>
-                    <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-condition-text').textContent, this)">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
-                        Copy
-                    </button>
+                    ${copyButtonHtml("document.getElementById('modal-condition-text').textContent")}
                 </div>
                 <div class="listing-modal-section-content" id="modal-condition-text">${esc(condition)}</div>
             </div>
@@ -2186,39 +2185,27 @@ function openListingDetail(result) {
                 </button>
             </div>
             <div class="listing-modal-body">
-                <!-- Title -->
                 <div class="listing-modal-section">
                     <div class="listing-modal-section-title">
                         <span>Title</span>
-                        <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-title-text').textContent, this)">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
-                            Copy
-                        </button>
+                        ${copyButtonHtml("document.getElementById('modal-title-text').textContent")}
                     </div>
                     <div class="listing-modal-section-content font-semibold" id="modal-title-text">${esc(listing.title)}</div>
                 </div>
 
-                <!-- Description -->
                 <div class="listing-modal-section">
                     <div class="listing-modal-section-title">
                         <span>Description</span>
-                        <button class="copy-btn" onclick="copyToClipboard(document.getElementById('modal-desc-text').textContent, this)">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
-                            Copy
-                        </button>
+                        ${copyButtonHtml("document.getElementById('modal-desc-text').textContent")}
                     </div>
                     <div class="listing-modal-section-content" id="modal-desc-text">${esc(listing.description)}</div>
                 </div>
 
-                <!-- Tags -->
                 ${tags.length > 0 ? `
                 <div class="listing-modal-section">
                     <div class="listing-modal-section-title">
                         <span>Tags (${tags.length})</span>
-                        <button class="copy-btn" onclick="copyToClipboard('${tagsStr.replace(/'/g, "\\'")}', this)">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>
-                            Copy
-                        </button>
+                        ${copyButtonHtml(`'${tagsStr.replace(/'/g, "\\'")}'`)}
                     </div>
                     <div class="flex flex-wrap gap-1.5">
                         ${tags.map(t => `<span class="text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-600 border border-slate-200">${esc(t)}</span>`).join('')}
