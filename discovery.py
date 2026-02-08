@@ -348,7 +348,7 @@ async def explore_data(
     return response_text
 
 
-MAX_EXTRACTION_RETRIES = 3
+MAX_EXTRACTION_RETRIES = 5
 
 # Modules the LLM extraction script is allowed to import
 _ALLOWED_IMPORTS = {"pandas", "pd", "io", "json", "re", "math"}
@@ -1247,8 +1247,13 @@ Keep the same interface:
 Return the fixed script inside a single ```python code block."""
 
     full_prompt = f"{prompt}\n\n## Sample Data\n```\n{sample_data}\n```"
-    text_response = await generate_with_text(full_prompt, thinking_level="high")
-    return extract_python_code(text_response)
+    for attempt in range(2):
+        text_response = await generate_with_text(full_prompt, thinking_level="high")
+        fixed = extract_python_code(text_response)
+        if fixed:
+            return fixed
+        logger.warning("Fix attempt returned no code block (attempt %d/2)", attempt + 1)
+    return None
 
 
 # ---------------------------------------------------------------------------
