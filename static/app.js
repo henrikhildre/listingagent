@@ -30,6 +30,7 @@
 const state = {
     phase: 'UPLOAD',
     jobId: null,
+    username: null,
     conversationHistory: [],
     dataModel: null,
     styleProfile: null,
@@ -518,6 +519,12 @@ async function uploadFiles() {
         hideLoading();
         showToast(`${state.uploadedFiles.length} files uploaded successfully.`, 'success');
 
+        // Check for pipeline cache hit
+        if (result.cache_hit && result.cache_meta) {
+            showCacheHitDialog(result.cache_meta, result.fingerprint);
+            return;
+        }
+
         // Transition to discovery (inline progress used inside startDiscovery)
         await startDiscovery();
     } catch (error) {
@@ -637,10 +644,80 @@ async function confirmDemoSelection(demoId, demoTitle) {
         state.jobId = result.job_id;
         hideLoading();
         showToast(`Demo loaded: ${result.file_count} files.`, 'success');
+
+        // Check for pipeline cache hit
+        if (result.cache_hit && result.cache_meta) {
+            showCacheHitDialog(result.cache_meta, result.fingerprint);
+            return;
+        }
+
         await startDiscovery();
     } catch (error) {
         hideLoading();
         showToast('Failed to load demo: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Show a modal dialog when a pipeline cache hit is detected.
+ */
+function showCacheHitDialog(meta, fingerprint) {
+    const platform = meta.platform ? ` on ${meta.platform}` : '';
+    const productCount = meta.product_count || '?';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'cache-hit-overlay';
+    overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    overlay.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" style="animation: fadeInUp var(--transition-medium)">
+            <div class="px-6 py-5 border-b border-slate-200">
+                <h2 class="text-lg font-bold text-slate-800">Recognized format</h2>
+                <p class="text-sm text-slate-500 mt-1">You've processed data with these columns before${platform}.</p>
+            </div>
+            <div class="p-6 space-y-3">
+                <button onclick="applyCacheChoice('full_reuse', '${fingerprint}')" class="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition group">
+                    <div class="text-sm font-semibold text-slate-800 group-hover:text-blue-700">Use previous recipe</div>
+                    <div class="text-xs text-slate-500 mt-0.5">Skip straight to generating listings — same style &amp; recipe as last time.</div>
+                </button>
+                <button onclick="applyCacheChoice('adjust_style', '${fingerprint}')" class="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition group">
+                    <div class="text-sm font-semibold text-slate-800 group-hover:text-blue-700">Adjust style / recipe</div>
+                    <div class="text-xs text-slate-500 mt-0.5">Reuse data mapping but redo the brand interview and recipe.</div>
+                </button>
+                <button onclick="applyCacheChoice('fresh', '${fingerprint}')" class="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition group">
+                    <div class="text-sm font-semibold text-slate-800">Start fresh</div>
+                    <div class="text-xs text-slate-500 mt-0.5">Ignore the cache and run the full pipeline from scratch.</div>
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+/**
+ * Handle the user's choice from the cache hit dialog.
+ */
+async function applyCacheChoice(mode, fingerprint) {
+    // Remove dialog
+    const overlay = document.getElementById('cache-hit-overlay');
+    if (overlay) overlay.remove();
+
+    if (mode === 'fresh') {
+        await startDiscovery();
+        return;
+    }
+
+    showLoading('Applying saved pipeline...');
+    try {
+        await api('/api/apply-cache', {
+            method: 'POST',
+            body: JSON.stringify({ job_id: state.jobId, fingerprint, mode }),
+        });
+        hideLoading();
+        await startDiscovery();
+    } catch (error) {
+        hideLoading();
+        showToast('Failed to apply cache: ' + error.message, 'error');
+        await startDiscovery();
     }
 }
 
@@ -663,6 +740,37 @@ function resetSession() {
     const chatMessages = document.getElementById('chat-messages');
     if (chatMessages) chatMessages.innerHTML = '';
     resetExecutionView();
+}
+
+/**
+ * Prompt user to confirm starting a new job, then reset everything.
+ */
+function confirmNewJob() {
+    // If on upload view with no job, nothing to lose
+    if (state.phase === 'UPLOAD' && !state.jobId) return;
+
+    if (!confirm('Start a new job? Current progress will be lost.')) return;
+
+    resetSession();
+    state.jobId = null;
+    state.phase = 'UPLOAD';
+    state.uploadedFiles = [];
+
+    // Reset upload UI elements
+    const fileList = document.getElementById('file-list');
+    if (fileList) fileList.innerHTML = '';
+    const exploreBtn = document.getElementById('explore-btn');
+    if (exploreBtn) exploreBtn.disabled = true;
+    const pasteInput = document.getElementById('paste-input');
+    if (pasteInput) pasteInput.value = '';
+    const pasteCharCount = document.getElementById('paste-char-count');
+    if (pasteCharCount) pasteCharCount.textContent = '0 characters';
+    const pasteExploreBtn = document.getElementById('paste-explore-btn');
+    if (pasteExploreBtn) pasteExploreBtn.disabled = true;
+    const fileInput = document.getElementById('file-input');
+    if (fileInput) fileInput.value = '';
+
+    showView('upload-view');
 }
 
 /**
@@ -711,6 +819,16 @@ async function startDiscovery() {
             role: 'assistant',
             content: result.response,
         });
+
+        // Check if cached artifacts let us skip phases
+        if (result.has_approved_recipe) {
+            // Full reuse — skip interview + recipe, go straight to execution
+            showToast('Using your previous recipe.', 'success');
+            addSystemMessage('Recognized format — using your saved recipe. Building catalog...');
+            setChatInputEnabled(false);
+            await buildDataModel();
+            return;
+        }
 
         // Enable chat for user to confirm/correct data mapping
         setChatInputEnabled(true);
@@ -1118,7 +1236,20 @@ async function buildDataModel() {
                 updateInlineProgress(progress, `Mapped ${productCount} products — starting brand profile...`);
 
                 updateContextPanel();
-                await startInterview(progress);
+
+                // Check if cached artifacts let us skip phases
+                const jobStatus = await api(`/api/status/${state.jobId}`);
+                if (jobStatus.recipe_approved) {
+                    // Full reuse: skip interview + recipe, go to execution
+                    removeInlineProgress(progress);
+                    addSystemMessage('Using your saved recipe — starting batch execution...');
+                    await startExecution();
+                } else if (jobStatus.phase === 'building_recipe') {
+                    // adjust_style with no style_profile: go to interview normally
+                    await startInterview(progress);
+                } else {
+                    await startInterview(progress);
+                }
             } else if (event.type === 'error') {
                 removeInlineProgress(progress);
                 setChatInputEnabled(true);
@@ -2484,34 +2615,44 @@ function closeListingDetail() {
 async function checkAuth() {
     try {
         const resp = await fetch('/api/auth-check');
-        return resp.ok;
+        if (resp.ok) {
+            const data = await resp.json();
+            state.username = data.username || null;
+            return true;
+        }
+        return false;
     } catch {
         return false;
     }
 }
 
 async function login() {
-    const input = document.getElementById('login-password');
+    const passwordInput = document.getElementById('login-password');
+    const usernameInput = document.getElementById('login-username');
     const errorEl = document.getElementById('login-error');
-    if (!input) return;
+    if (!passwordInput) return;
 
     function showError(msg) {
         errorEl.textContent = msg;
         errorEl.classList.remove('hidden');
     }
 
-    const password = input.value;
+    const username = (usernameInput?.value || '').trim();
+    const password = passwordInput.value;
+    if (!username) return showError('Please enter your name.');
     if (!password) return showError('Please enter a password.');
 
     try {
         const resp = await fetch('/api/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password }),
+            body: JSON.stringify({ username, password }),
         });
 
         if (!resp.ok) return showError('Wrong password.');
 
+        const data = await resp.json();
+        state.username = data.username || username;
         errorEl.classList.add('hidden');
         showView('upload-view');
     } catch {
@@ -2534,6 +2675,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Login handlers
     document.getElementById('login-btn')?.addEventListener('click', login);
+    document.getElementById('login-username')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('login-password')?.focus(); }
+    });
     document.getElementById('login-password')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); login(); }
     });

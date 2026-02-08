@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field
 import calibration
 import discovery
 import executor
+import pipeline_cache
 import recipe as recipe_module
 from file_utils import (
     IMAGE_EXTENSIONS,
@@ -158,6 +159,7 @@ async def auth_middleware(request: Request, call_next):
 
 class LoginRequest(BaseModel):
     password: str = Field(max_length=128)
+    username: str = Field(default="", max_length=64)
 
 
 @app.post("/api/login")
@@ -176,7 +178,9 @@ async def login(req: LoginRequest, request: Request):
     token = os.urandom(32).hex()
     _active_tokens.add(token)
 
-    response = JSONResponse(content={"ok": True})
+    username = req.username.strip() or "anonymous"
+
+    response = JSONResponse(content={"ok": True, "username": username})
     response.set_cookie(
         key="session_token",
         value=token,
@@ -185,13 +189,22 @@ async def login(req: LoginRequest, request: Request):
         samesite="lax",
         max_age=60 * 60 * 24 * 30,  # 30 days
     )
+    response.set_cookie(
+        key="session_username",
+        value=username,
+        httponly=False,
+        secure=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+    )
     return response
 
 
 @app.get("/api/auth-check")
 async def auth_check(request: Request):
     if _is_authenticated(request):
-        return {"authenticated": True}
+        username = request.cookies.get("session_username", "anonymous")
+        return {"authenticated": True, "username": username}
     return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
 
 
@@ -286,7 +299,7 @@ def _load_json_artifact(job_path: Path, filename: str) -> dict | None:
 
 
 @app.post("/api/upload")
-async def upload_files(files: list[UploadFile] = File(...)):
+async def upload_files(request: Request, files: list[UploadFile] = File(...)):
     """Accept file uploads, create job directory, save files. Return job_id + file list."""
     job_id = str(uuid4())
     job_path = create_job_directory(job_id)
@@ -315,11 +328,27 @@ async def upload_files(files: list[UploadFile] = File(...)):
         saved_files.append(filename)
         logger.info("Saved upload %s (%0.1f MB) for job %s", filename, size_mb, job_id)
 
-    return {
+    # Check fingerprint + cache
+    result = {
         "job_id": job_id,
         "files": saved_files,
         "file_count": len(saved_files),
     }
+
+    username = request.cookies.get("session_username", "anonymous")
+    try:
+        fp_result = pipeline_cache.compute_fingerprint_for_job(job_id)
+        if fp_result:
+            fingerprint, headers = fp_result
+            result["fingerprint"] = fingerprint
+            cache_meta = pipeline_cache.lookup_cache(username, fingerprint)
+            if cache_meta:
+                result["cache_hit"] = True
+                result["cache_meta"] = cache_meta
+    except Exception as e:
+        logger.warning("Fingerprint/cache check failed for job %s: %s", job_id, e)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +414,7 @@ class LoadDemoRequest(BaseModel):
 
 
 @app.post("/api/load-demo")
-async def load_demo(req: LoadDemoRequest = LoadDemoRequest()):
+async def load_demo(request: Request, req: LoadDemoRequest = LoadDemoRequest()):
     """Load a bundled demo dataset into a new job. Returns same shape as /api/upload."""
     demo_dir = DEMO_DATA_DIR / req.demo_id
     if not demo_dir.exists():
@@ -448,11 +477,26 @@ async def load_demo(req: LoadDemoRequest = LoadDemoRequest()):
 
     logger.info("Loaded demo '%s' for job %s: %d files", req.demo_id, job_id, len(saved_files))
 
-    return {
+    result = {
         "job_id": job_id,
         "files": saved_files,
         "file_count": len(saved_files),
     }
+
+    username = request.cookies.get("session_username", "anonymous")
+    try:
+        fp_result = pipeline_cache.compute_fingerprint_for_job(job_id)
+        if fp_result:
+            fingerprint, headers = fp_result
+            result["fingerprint"] = fingerprint
+            cache_meta = pipeline_cache.lookup_cache(username, fingerprint)
+            if cache_meta:
+                result["cache_hit"] = True
+                result["cache_meta"] = cache_meta
+    except Exception as e:
+        logger.warning("Fingerprint/cache check failed for demo job %s: %s", job_id, e)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -505,10 +549,20 @@ async def discover(req: JobIdRequest):
         logger.exception("Discovery failed for job %s", req.job_id)
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Check if cached artifacts already exist in this job
+    job_path = get_job_path(req.job_id)
+    has_style_profile = (job_path / "style_profile.json").exists()
+    has_approved_recipe = False
+    recipe_data = _load_json_artifact(job_path, "recipe.json")
+    if recipe_data and recipe_data.get("approved"):
+        has_approved_recipe = True
+
     return {
         "job_id": req.job_id,
         "response": analysis,
         "categories": file_summary,
+        "has_style_profile": has_style_profile,
+        "has_approved_recipe": has_approved_recipe,
     }
 
 
@@ -887,7 +941,7 @@ def _summarize_results(test_results: list[dict]) -> list[dict]:
 
 
 @app.post("/api/approve-recipe")
-async def approve_recipe_endpoint(req: JobIdRequest):
+async def approve_recipe_endpoint(req: JobIdRequest, request: Request):
     """Lock the recipe for batch execution."""
     job_path = _job_exists(req.job_id)
 
@@ -901,11 +955,51 @@ async def approve_recipe_endpoint(req: JobIdRequest):
         logger.exception("approve-recipe failed for job %s", req.job_id)
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Save to pipeline cache (best-effort, never blocks approval)
+    try:
+        username = request.cookies.get("session_username", "anonymous")
+        extraction_script = _load_json_artifact(job_path, "extraction_script.json")
+        if extraction_script:
+            fingerprint = extraction_script.get("fingerprint")
+            headers = extraction_script.get("headers", [])
+            if fingerprint and headers:
+                pipeline_cache.save_to_cache(username, fingerprint, req.job_id, headers)
+    except Exception as e:
+        logger.warning("Cache save failed for job %s: %s", req.job_id, e)
+
     return {
         "job_id": req.job_id,
         "recipe": approved,
         "approved": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# 6b. POST /api/apply-cache
+# ---------------------------------------------------------------------------
+
+
+class ApplyCacheRequest(BaseModel):
+    job_id: str
+    fingerprint: str
+    mode: str = Field(pattern=r"^(full_reuse|adjust_style|fresh)$")
+
+
+@app.post("/api/apply-cache")
+async def apply_cache(req: ApplyCacheRequest, request: Request):
+    """Apply cached pipeline artifacts to a job."""
+    _job_exists(req.job_id)
+    username = request.cookies.get("session_username", "anonymous")
+
+    try:
+        pipeline_cache.apply_cache_to_job(username, req.fingerprint, req.job_id, req.mode)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Cache not found.")
+    except Exception as e:
+        logger.exception("apply-cache failed for job %s", req.job_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"applied": True, "mode": req.mode}
 
 
 # ---------------------------------------------------------------------------
