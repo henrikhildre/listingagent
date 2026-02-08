@@ -226,10 +226,52 @@ function getFileIcon(filename) {
  * Simple markdown-ish formatting for chat messages.
  * Handles **bold**, `code`, ```code blocks```, and newlines.
  */
+function renderJsonCard(obj) {
+    const formatLabel = (key) => key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const pill = (text) => `<span style="display:inline-block;background:#EEF2FF;color:#4F46E5;font-size:12px;padding:3px 10px;border-radius:999px;margin:2px 4px 2px 0">${escapeHtml(String(text))}</span>`;
+    let rows = '';
+    for (const [key, value] of Object.entries(obj)) {
+        if (value === null || value === undefined || value === '') continue;
+        if (Array.isArray(value)) {
+            const items = value.filter(v => v != null && v !== '');
+            if (!items.length) continue;
+            rows += `<div style="padding:6px 0">
+                <div style="color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px">${escapeHtml(formatLabel(key))}</div>
+                <div>${items.map(v => typeof v === 'object' ? `<code style="font-size:12px">${escapeHtml(JSON.stringify(v))}</code>` : pill(v)).join('')}</div>
+            </div>`;
+        } else if (typeof value === 'object') {
+            rows += `<div style="padding:6px 0">
+                <div style="color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px">${escapeHtml(formatLabel(key))}</div>
+                <div style="color:#1E293B;font-size:13px"><code>${escapeHtml(JSON.stringify(value))}</code></div>
+            </div>`;
+        } else {
+            rows += `<div style="padding:6px 0">
+                <div style="color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px">${escapeHtml(formatLabel(key))}</div>
+                <div style="color:#1E293B;font-size:13px">${escapeHtml(String(value))}</div>
+            </div>`;
+        }
+    }
+    return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">${rows}</div>`;
+}
+
 function formatMessage(text) {
     if (!text) return '';
     if (typeof marked !== 'undefined') {
-        return marked.parse(text);
+        const renderer = new marked.Renderer();
+        const defaultCode = renderer.code.bind(renderer);
+        renderer.code = function({ text: code, lang }) {
+            const src = (typeof code === 'string' ? code : code?.text || '').trim();
+            if (lang === 'json' || (!lang && src.startsWith('{'))) {
+                try {
+                    const obj = JSON.parse(src);
+                    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                        return renderJsonCard(obj);
+                    }
+                } catch {}
+            }
+            return defaultCode({ text: code, lang });
+        };
+        return marked.parse(text, { renderer });
     }
     // Fallback: escape HTML and add line breaks
     return text
@@ -603,9 +645,31 @@ async function confirmDemoSelection(demoId, demoTitle) {
 }
 
 /**
+ * Clear all previous session state so a new upload starts fresh.
+ */
+function resetSession() {
+    state.conversationHistory = [];
+    state.dataModel = null;
+    state.styleProfile = null;
+    state.recipe = null;
+    state.testResults = [];
+    state.batchResults = [];
+    state.fullListings = [];
+    state.executionStats = null;
+    if (state.ws) {
+        state.ws.close();
+        state.ws = null;
+    }
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) chatMessages.innerHTML = '';
+    resetExecutionView();
+}
+
+/**
  * Trigger Phase 1 discovery.
  */
 async function startDiscovery() {
+    resetSession();
     state.phase = 'DISCOVER';
     showView('chat-view');
     updatePhaseIndicator('DISCOVER');
@@ -899,9 +963,6 @@ async function handleInterviewChat(message) {
             state.styleProfile = result.style_profile;
             updateContextPanel();
         }
-
-        // Show formatted profile card and confirm button
-        addMessage('assistant', formatStyleProfileCard(state.styleProfile), { html: true });
         showActionButton('confirm-profile-btn', 'Confirm Brand Profile', async () => {
             hideActionButton('confirm-profile-btn');
             addSystemMessage('Brand profile confirmed. Building your listing recipe...');
