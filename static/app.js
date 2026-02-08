@@ -1742,9 +1742,19 @@ function resetExecutionView() {
     if (progressBar) progressBar.style.width = '0%';
     if (progressText) progressText.textContent = '0 / 0 products';
 
-    // Clear listings grid
+    // Show skeleton placeholder cards
     const grid = document.getElementById('listings-grid');
-    if (grid) grid.innerHTML = '';
+    if (grid) {
+        grid.innerHTML = Array(3).fill(`
+            <div class="skeleton-card">
+                <div class="skeleton-bar" style="width: 40%; height: 0.75rem; margin-bottom: 0.75rem"></div>
+                <div class="skeleton-bar" style="width: 90%; height: 1rem; margin-bottom: 0.5rem"></div>
+                <div class="skeleton-bar" style="width: 100%; height: 0.75rem; margin-bottom: 0.25rem"></div>
+                <div class="skeleton-bar" style="width: 70%; height: 0.75rem; margin-bottom: 1rem"></div>
+                <div class="skeleton-bar" style="width: 30%; height: 1.25rem"></div>
+            </div>
+        `).join('');
+    }
 
     // Reset stats
     const statsContainer = document.getElementById('execution-stats');
@@ -1972,6 +1982,10 @@ function addListingCard(data) {
 
     const isRetrying = data.status === 'retrying';
     const isOk = data.status === 'ok';
+
+    // Clear skeleton placeholders on first real card
+    const skeletons = grid.querySelectorAll('.skeleton-card');
+    if (skeletons.length) skeletons.forEach(s => s.remove());
 
     // Check if a card already exists for this product (update in-place)
     let card = grid.querySelector(`[data-product-id="${data.product_id}"]`);
