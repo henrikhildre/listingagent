@@ -1916,15 +1916,15 @@ function renderFieldBar(field, completeness, stats) {
 function formatStyleProfileCard(profile) {
     if (!profile) return '<p>No profile data available.</p>';
 
-    const pill = (text) => `<span style="display:inline-block;background:#EEF2FF;color:#4F46E5;font-size:12px;padding:2px 10px;border-radius:999px;margin:2px 3px 2px 0">${escapeHtml(String(text))}</span>`;
+    const pill = (text) => `<span style="display:inline-block;background:#EEF2FF;color:#4F46E5;font-size:12px;padding:3px 10px;border-radius:999px;margin:2px 4px 2px 0">${escapeHtml(String(text))}</span>`;
 
     const formatLabel = (key) => key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     // Build a title from platform + seller_type if available
     const titleParts = [profile.platform, profile.seller_type].filter(Boolean);
-    const title = titleParts.length ? titleParts.map(s => escapeHtml(s)).join(' \u00b7 ') : 'Brand Profile';
+    const title = titleParts.length ? titleParts.map(s => escapeHtml(s)).join(' · ') : 'Brand Profile';
 
-    // Render all fields dynamically
+    // Render all fields dynamically — label stacked above value for consistency
     let rowsHtml = '';
     for (const [key, value] of Object.entries(profile)) {
         if (value === null || value === undefined || value === '') continue;
@@ -1933,24 +1933,22 @@ function formatStyleProfileCard(profile) {
         if (Array.isArray(value)) {
             const items = value.filter(v => v !== null && v !== '');
             if (!items.length) continue;
-            rowsHtml += `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9">
-                <span style="color:#64748B;font-size:13px;display:block;margin-bottom:4px">${escapeHtml(formatLabel(key))}</span>
+            rowsHtml += `<div style="padding:6px 0">
+                <div style="color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px">${escapeHtml(formatLabel(key))}</div>
                 <div>${items.map(v => pill(v)).join('')}</div>
             </div>`;
         } else {
-            rowsHtml += `<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #F1F5F9">
-                <span style="color:#64748B;font-size:13px;min-width:120px;flex-shrink:0">${escapeHtml(formatLabel(key))}</span>
-                <span style="color:#1E293B;font-size:13px">${escapeHtml(String(value))}</span>
+            rowsHtml += `<div style="padding:6px 0">
+                <div style="color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px">${escapeHtml(formatLabel(key))}</div>
+                <div style="color:#1E293B;font-size:13px">${escapeHtml(String(value))}</div>
             </div>`;
         }
     }
 
     return `
-        <p style="margin-bottom:12px">Here's your brand profile. Review it and click <strong>Confirm Brand Profile</strong> to proceed, or tell me what to adjust.</p>
-        <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:16px;margin-top:4px">
-            <div style="font-weight:600;font-size:15px;color:#1E293B;margin-bottom:12px">${title}</div>
-            ${rowsHtml}
-        </div>
+        <p style="margin-bottom:10px">Here's your brand profile. Review it and click <strong>Confirm Brand Profile</strong> to proceed, or tell me what to adjust.</p>
+        <div style="font-weight:600;font-size:14px;color:#1E293B;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #E2E8F0">${title}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">${rowsHtml}</div>
     `;
 }
 
