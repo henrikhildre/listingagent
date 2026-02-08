@@ -2,6 +2,7 @@
 Phase 4: Batch Execution.
 
 Applies the approved recipe to every product in the data model.
+Products are processed in parallel (5 concurrent) via asyncio.gather.
 
 For each product the module:
 1. Fills the prompt template with product data + style profile.
@@ -17,8 +18,6 @@ After the full batch:
 - Generates summary.csv
 - Generates batch report (report.json)
 - Creates downloadable ZIP via file_utils
-
-Rate limiting: 1-second delay between items (free-tier 60 req/min).
 """
 
 import asyncio
@@ -144,6 +143,8 @@ async def _process_product(
             model=BATCH_MODEL,
             thinking_level="low",
         )
+    except QuotaExhaustedError:
+        raise  # let batch handler deal with quota exhaustion
     except Exception as e:
         logger.error("Gemini call failed for product %s: %s", product_id, e)
         return _failed_result(product_id, sku, image_filename, str(e))
@@ -200,6 +201,8 @@ async def _process_product(
             )
 
         listing = parse_json_from_response(raw_text)
+    except QuotaExhaustedError:
+        raise  # let batch handler deal with quota exhaustion
     except Exception as e:
         logger.error("Retry failed for product %s: %s", product_id, e)
         # Return the first attempt's result as a failure
@@ -309,39 +312,55 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     listings_dir = job_path / "output" / "listings"
     listings_dir.mkdir(parents=True, exist_ok=True)
 
-    results: list[dict] = []
     start_time = time.monotonic()
 
-    for idx, product in enumerate(products):
+    # --- Parallel execution with concurrency limit ---
+    CONCURRENCY = 5
+    completed_count = 0
+    quota_exhausted = False
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+
+    async def _process_one(idx: int, product: dict) -> dict:
+        nonlocal completed_count, quota_exhausted
         product_id = product.get("id", f"product_{idx}")
+        sku = product.get("sku")
+        image_files = product.get("image_files", [])
+        image_filename = image_files[0] if image_files else None
 
-        # Process
-        try:
-            result = await _process_product(
-                job_id, product, recipe, style_profile, output_schema
-            )
-        except QuotaExhaustedError as e:
-            logger.error("Quota exhausted at product %d/%d: %s", idx + 1, total, e)
-            # Mark this and all remaining products as failed
-            for remaining_idx in range(idx, total):
-                rid = products[remaining_idx].get("id", f"product_{remaining_idx}")
-                rsku = products[remaining_idx].get("sku")
-                rimg = (products[remaining_idx].get("image_files") or [None])[0]
-                results.append(_failed_result(rid, rsku, rimg, "API quota exhausted"))
-            await _send_ws_message(
-                websocket_connections,
-                {"type": "error", "message": "Gemini API quota exhausted. Batch stopped early."},
-            )
-            break
+        if quota_exhausted:
+            return _failed_result(product_id, sku, image_filename, "API quota exhausted")
 
-        results.append(result)
+        async with semaphore:
+            if quota_exhausted:
+                return _failed_result(
+                    product_id, sku, image_filename, "API quota exhausted"
+                )
+            try:
+                result = await _process_product(
+                    job_id, product, recipe, style_profile, output_schema
+                )
+            except QuotaExhaustedError as e:
+                logger.error(
+                    "Quota exhausted at product %d/%d: %s", idx + 1, total, e
+                )
+                quota_exhausted = True
+                await _send_ws_message(
+                    websocket_connections,
+                    {
+                        "type": "error",
+                        "message": "Gemini API quota exhausted. Batch stopped early.",
+                    },
+                )
+                return _failed_result(
+                    product_id, sku, image_filename, "API quota exhausted"
+                )
 
         # Save individual listing JSON (even partial / failed ones)
         listing_path = listings_dir / f"{product_id}.json"
         _save_listing(listing_path, result)
 
         # Stream progress
-        completed = idx + 1
+        completed_count += 1
         score = result.get("validation", {}).get("score")
         title = (result.get("listing") or {}).get("title")
         status = "failed" if result.get("failed") else "ok"
@@ -349,16 +368,18 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
         await _send_progress(
             websocket_connections,
             product_id=product_id,
-            completed=completed,
+            completed=completed_count,
             total=total,
             score=score,
             title=title,
             status=status,
         )
 
-        # Rate-limit delay (skip after the last item)
-        if completed < total:
-            await asyncio.sleep(1)
+        return result
+
+    results = list(await asyncio.gather(
+        *[_process_one(idx, product) for idx, product in enumerate(products)]
+    ))
 
     elapsed = time.monotonic() - start_time
 
