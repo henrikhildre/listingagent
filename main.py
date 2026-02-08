@@ -861,6 +861,94 @@ async def download(job_id: str):
 
 
 # ---------------------------------------------------------------------------
+# 9b. GET /api/download/{job_id}/{format}  — platform-specific exports
+# ---------------------------------------------------------------------------
+
+_EXPORT_FORMATS = {
+    "etsy": ("etsy_upload.csv", "text/csv", "etsy_upload.csv"),
+    "ebay": ("ebay_upload.csv", "text/csv", "ebay_upload.csv"),
+    "shopify": ("shopify_upload.csv", "text/csv", "shopify_upload.csv"),
+    "csv": ("summary.csv", "text/csv", "summary.csv"),
+    "text": ("listings_copy_paste.txt", "text/plain", "listings.txt"),
+}
+
+
+@app.get("/api/download/{job_id}/{export_format}")
+async def download_format(job_id: str, export_format: str):
+    """Download a platform-specific export file."""
+    job_path = _job_exists(job_id)
+
+    fmt = _EXPORT_FORMATS.get(export_format)
+    if not fmt:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown format '{export_format}'. "
+                   f"Available: {', '.join(_EXPORT_FORMATS.keys())}",
+        )
+
+    filename, media_type, download_name = fmt
+    file_path = job_path / "output" / filename
+
+    if not file_path.exists():
+        # Try to generate on-the-fly if it doesn't exist
+        try:
+            from executor import (
+                generate_etsy_csv,
+                generate_ebay_csv,
+                generate_shopify_csv,
+                generate_copy_paste_text,
+            )
+            generators = {
+                "etsy": generate_etsy_csv,
+                "ebay": generate_ebay_csv,
+                "shopify": generate_shopify_csv,
+                "text": generate_copy_paste_text,
+            }
+            gen = generators.get(export_format)
+            if gen:
+                gen(job_id)
+        except Exception as e:
+            logger.warning("On-the-fly generation failed for %s: %s", export_format, e)
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Export file not found. Run batch execution first.",
+        )
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=f"{job_id[:8]}_{download_name}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 9c. GET /api/listings/{job_id}  — all listings as JSON for frontend
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/listings/{job_id}")
+async def get_listings(job_id: str):
+    """Return all generated listings as a JSON array for the frontend."""
+    job_path = _job_exists(job_id)
+    listings_dir = job_path / "output" / "listings"
+
+    if not listings_dir.exists():
+        raise HTTPException(status_code=404, detail="No listings found.")
+
+    listings = []
+    for p in sorted(listings_dir.glob("*.json")):
+        try:
+            data = json.loads(p.read_text())
+            listings.append(data)
+        except Exception:
+            pass
+
+    return {"job_id": job_id, "listings": listings, "count": len(listings)}
+
+
+# ---------------------------------------------------------------------------
 # 10. WebSocket /ws/{job_id}
 # ---------------------------------------------------------------------------
 

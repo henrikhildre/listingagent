@@ -394,7 +394,7 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
 
     elapsed = time.monotonic() - start_time
 
-    # Post-processing: CSV, report, ZIP
+    # Post-processing: CSV, report, platform exports, ZIP
     await generate_summary_csv(job_id, results)
     report = generate_batch_report(job_id, results, elapsed_seconds=elapsed)
 
@@ -402,6 +402,15 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     report_path = job_path / "output" / "report.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, default=str)
+
+    # Generate platform-specific exports
+    try:
+        generate_etsy_csv(job_id)
+        generate_ebay_csv(job_id)
+        generate_shopify_csv(job_id)
+        generate_copy_paste_text(job_id)
+    except Exception as e:
+        logger.warning("Platform export generation failed (non-fatal): %s", e)
 
     # Package into ZIP
     create_output_zip(job_id)
@@ -455,7 +464,7 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
     Write a summary CSV of all generated listings.
 
     Columns: product_id, sku, title, description, tags, suggested_price,
-             confidence, validation_score, image_filename
+             confidence, validation_score, image_filename, plus new fields.
 
     Returns the path to the CSV file.
     """
@@ -472,6 +481,10 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
         "confidence",
         "validation_score",
         "image_filename",
+        "social_caption",
+        "hashtags",
+        "item_specifics",
+        "condition_description",
     ]
 
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -483,6 +496,18 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
             tags_list = listing.get("tags", [])
             tags_str = (
                 ";".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+            )
+            hashtags_list = listing.get("hashtags", [])
+            hashtags_str = (
+                ";".join(hashtags_list)
+                if isinstance(hashtags_list, list)
+                else str(hashtags_list)
+            )
+            specifics = listing.get("item_specifics", {})
+            specifics_str = (
+                "; ".join(f"{k}: {v}" for k, v in specifics.items())
+                if isinstance(specifics, dict)
+                else str(specifics)
             )
 
             writer.writerow(
@@ -496,11 +521,280 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
                     "confidence": listing.get("confidence", ""),
                     "validation_score": result.get("validation", {}).get("score", ""),
                     "image_filename": result.get("image_filename") or "",
+                    "social_caption": listing.get("social_caption", ""),
+                    "hashtags": hashtags_str,
+                    "item_specifics": specifics_str,
+                    "condition_description": listing.get("condition_description", ""),
                 }
             )
 
     logger.info("Summary CSV written to %s", csv_path)
     return csv_path
+
+
+# ---------------------------------------------------------------------------
+# Platform-specific CSV exports
+# ---------------------------------------------------------------------------
+
+
+def _get_results_from_disk(job_id: str) -> list[dict]:
+    """Load all listing result JSONs from disk."""
+    job_path = get_job_path(job_id)
+    listings_dir = job_path / "output" / "listings"
+    results = []
+    if not listings_dir.exists():
+        return results
+    for p in sorted(listings_dir.glob("*.json")):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                results.append(json.load(f))
+        except Exception as e:
+            logger.warning("Failed to load listing %s: %s", p, e)
+    return results
+
+
+def generate_etsy_csv(job_id: str) -> Path:
+    """
+    Generate an Etsy-compatible bulk upload CSV.
+
+    Maps listing fields to Etsy's expected column headers.
+    """
+    results = _get_results_from_disk(job_id)
+    job_path = get_job_path(job_id)
+    csv_path = job_path / "output" / "etsy_upload.csv"
+
+    fieldnames = [
+        "Title",
+        "Description",
+        "Price",
+        "Tags",
+        "Materials",
+        "Image",
+        "Category",
+        "SKU",
+        "Who Made",
+        "When Made",
+        "Taxonomy",
+    ]
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for result in results:
+            listing = result.get("listing") or {}
+            if not listing:
+                continue
+            tags = listing.get("tags", [])
+            specifics = listing.get("item_specifics", {})
+            materials = specifics.get("Material", specifics.get("Materials", ""))
+
+            writer.writerow({
+                "Title": (listing.get("title", "") or "")[:140],
+                "Description": listing.get("description", ""),
+                "Price": listing.get("suggested_price", ""),
+                "Tags": ",".join(tags[:13]),
+                "Materials": materials,
+                "Image": result.get("image_filename") or "",
+                "Category": listing.get("category_suggestion", ""),
+                "SKU": result.get("sku") or "",
+                "Who Made": "someone_else",
+                "When Made": specifics.get("Era", specifics.get("When Made", "")),
+                "Taxonomy": listing.get("category_suggestion", ""),
+            })
+
+    logger.info("Etsy CSV written to %s", csv_path)
+    return csv_path
+
+
+def generate_ebay_csv(job_id: str) -> Path:
+    """
+    Generate an eBay-compatible bulk upload CSV.
+
+    Maps listing fields to eBay's File Exchange / Seller Hub format.
+    """
+    results = _get_results_from_disk(job_id)
+    job_path = get_job_path(job_id)
+    csv_path = job_path / "output" / "ebay_upload.csv"
+
+    fieldnames = [
+        "Title",
+        "Description",
+        "StartPrice",
+        "BuyItNowPrice",
+        "Category",
+        "ConditionDescription",
+        "PicURL",
+        "CustomLabel",
+        "Brand",
+        "Color",
+        "Material",
+        "Style",
+        "Era",
+        "Tags",
+    ]
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for result in results:
+            listing = result.get("listing") or {}
+            if not listing:
+                continue
+            specifics = listing.get("item_specifics", {})
+            price = listing.get("suggested_price", "")
+            tags = listing.get("tags", [])
+
+            writer.writerow({
+                "Title": (listing.get("title", "") or "")[:80],
+                "Description": listing.get("description", ""),
+                "StartPrice": price,
+                "BuyItNowPrice": price,
+                "Category": listing.get("category_suggestion", ""),
+                "ConditionDescription": listing.get("condition_description", ""),
+                "PicURL": result.get("image_filename") or "",
+                "CustomLabel": result.get("sku") or "",
+                "Brand": specifics.get("Brand", ""),
+                "Color": specifics.get("Color", ""),
+                "Material": specifics.get("Material", ""),
+                "Style": specifics.get("Style", ""),
+                "Era": specifics.get("Era", ""),
+                "Tags": ",".join(tags[:13]),
+            })
+
+    logger.info("eBay CSV written to %s", csv_path)
+    return csv_path
+
+
+def generate_shopify_csv(job_id: str) -> Path:
+    """
+    Generate a Shopify-compatible product import CSV.
+
+    Maps listing fields to Shopify's standard import columns.
+    """
+    results = _get_results_from_disk(job_id)
+    job_path = get_job_path(job_id)
+    csv_path = job_path / "output" / "shopify_upload.csv"
+
+    fieldnames = [
+        "Handle",
+        "Title",
+        "Body (HTML)",
+        "Vendor",
+        "Product Category",
+        "Type",
+        "Tags",
+        "Published",
+        "Variant SKU",
+        "Variant Price",
+        "Image Src",
+        "SEO Title",
+        "SEO Description",
+    ]
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for result in results:
+            listing = result.get("listing") or {}
+            if not listing:
+                continue
+            tags = listing.get("tags", [])
+            title = listing.get("title", "")
+            # Generate a URL-safe handle from the title
+            handle = (
+                title.lower()
+                .replace(" ", "-")
+                .replace("'", "")
+                .replace('"', "")[:100]
+            )
+            # Wrap description in basic HTML paragraphs
+            desc = listing.get("description", "")
+            body_html = "<p>" + desc.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+            seo_desc = desc[:320] if desc else ""
+
+            writer.writerow({
+                "Handle": handle,
+                "Title": title,
+                "Body (HTML)": body_html,
+                "Vendor": "",
+                "Product Category": listing.get("category_suggestion", ""),
+                "Type": listing.get("category_suggestion", ""),
+                "Tags": ", ".join(tags),
+                "Published": "TRUE",
+                "Variant SKU": result.get("sku") or "",
+                "Variant Price": listing.get("suggested_price", ""),
+                "Image Src": result.get("image_filename") or "",
+                "SEO Title": title[:70],
+                "SEO Description": seo_desc,
+            })
+
+    logger.info("Shopify CSV written to %s", csv_path)
+    return csv_path
+
+
+def generate_copy_paste_text(job_id: str) -> Path:
+    """
+    Generate a plain-text file with all listings formatted for quick
+    copy-paste into any platform. Each listing is separated by a divider.
+    """
+    results = _get_results_from_disk(job_id)
+    job_path = get_job_path(job_id)
+    txt_path = job_path / "output" / "listings_copy_paste.txt"
+
+    lines = []
+    for i, result in enumerate(results):
+        listing = result.get("listing") or {}
+        if not listing:
+            continue
+
+        sku = result.get("sku") or result.get("product_id", "")
+        lines.append(f"{'='*60}")
+        lines.append(f"LISTING {i+1} — {sku}")
+        lines.append(f"{'='*60}")
+        lines.append("")
+        lines.append(f"TITLE: {listing.get('title', '')}")
+        lines.append("")
+        lines.append("DESCRIPTION:")
+        lines.append(listing.get("description", ""))
+        lines.append("")
+        tags = listing.get("tags", [])
+        if tags:
+            lines.append(f"TAGS: {', '.join(tags)}")
+            lines.append("")
+        price = listing.get("suggested_price")
+        if price:
+            lines.append(f"PRICE: ${price}")
+            lines.append("")
+        condition = listing.get("condition_description")
+        if condition:
+            lines.append(f"CONDITION: {condition}")
+            lines.append("")
+        specifics = listing.get("item_specifics", {})
+        if specifics:
+            lines.append("ITEM SPECIFICS:")
+            for k, v in specifics.items():
+                lines.append(f"  {k}: {v}")
+            lines.append("")
+        caption = listing.get("social_caption")
+        if caption:
+            lines.append("SOCIAL MEDIA CAPTION:")
+            lines.append(caption)
+            lines.append("")
+        hashtags = listing.get("hashtags", [])
+        if hashtags:
+            lines.append("HASHTAGS:")
+            lines.append(" ".join(f"#{h}" for h in hashtags))
+            lines.append("")
+        lines.append("")
+
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    logger.info("Copy-paste text written to %s", txt_path)
+    return txt_path
 
 
 # ---------------------------------------------------------------------------
