@@ -1180,10 +1180,10 @@ def soften_word_count_issues(validation: dict, style_profile: dict) -> dict:
     """Downgrade word count issues to soft warnings when not strict.
 
     Mutates nothing — returns a new validation dict.  When
-    description_word_count_strict is True (or absent), returns the
+    description_word_count_strict is True, returns the
     original unchanged.
     """
-    if style_profile.get("description_word_count_strict", True):
+    if style_profile.get("description_word_count_strict", False):
         return validation
 
     issues = validation.get("issues", [])
@@ -1214,7 +1214,7 @@ def combine_validation(
     code_issues = code_validation.get("issues", [])
     judge_criteria = judge_result.get("criteria", [])
 
-    strict_wc = (style_profile or {}).get("description_word_count_strict", True)
+    strict_wc = (style_profile or {}).get("description_word_count_strict", False)
 
     # Split word count issues from hard failures when not strict
     if strict_wc:
