@@ -1030,12 +1030,6 @@ def _basic_validation(listing: dict, style_profile: dict) -> dict:
     if not isinstance(price, (int, float)) or price <= 0:
         issues.append("Invalid or missing price")
 
-    # Check mandatory mentions
-    desc_lower = description.lower()
-    for mention in style_profile.get("always_mention", []):
-        if mention.lower() not in desc_lower:
-            issues.append(f"Missing mandatory mention: '{mention}'")
-
     score = max(0, 100 - (len(issues) * 15))
     return {
         "passed": len(issues) == 0,

@@ -2691,6 +2691,29 @@ function openListingDetail(result) {
         `;
     }
 
+    // Validation issues
+    const validation = result.validation || {};
+    const valScore = validation.score;
+    const valPassed = validation.passed;
+    const valIssues = validation.issues || [];
+    let validationHtml = '';
+    if (!valPassed && valIssues.length > 0) {
+        validationHtml = `
+            <div class="listing-modal-section">
+                <div class="listing-modal-section-title">
+                    <span>Validation Issues</span>
+                    <span class="text-xs font-normal text-amber-600">${valScore !== undefined ? `Score: ${valScore}` : ''}</span>
+                </div>
+                <ul class="space-y-1">
+                    ${valIssues.map(i => `<li class="text-sm text-amber-700 flex items-start gap-1.5">
+                        <span class="text-amber-500 mt-0.5 shrink-0">&#x26A0;</span>
+                        <span>${esc(i)}</span>
+                    </li>`).join('')}
+                </ul>
+            </div>
+        `;
+    }
+
     // Tags section
     const tags = listing.tags || [];
     const tagsStr = tags.join(', ');
@@ -2765,6 +2788,8 @@ function openListingDetail(result) {
                     <div class="listing-modal-section-content text-sm text-slate-500">${esc(priceRationale)}</div>
                 </div>
                 ` : ''}
+
+                ${validationHtml}
 
                 ${listing.notes_for_seller ? `
                 <div class="listing-modal-section">
