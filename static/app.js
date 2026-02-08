@@ -1489,7 +1489,9 @@ function buildRecipeTestSummary(testResults) {
         card += tagPillsHtml(tr.listing?.tags, 'chat');
 
         if (tr.listing?.suggested_price) {
-            card += `<div class="test-result-price">$${escapeHtml(String(tr.listing.suggested_price))}</div>`;
+            const conf = tr.listing.confidence;
+            const confLabel = conf === 'high' ? 'Based on pricing strategy' : conf === 'medium' ? 'Estimated by AI' : 'AI guess';
+            card += `<div class="test-result-price">$${escapeHtml(String(tr.listing.suggested_price))} <span class="text-xs text-slate-400 font-normal ml-1">${confLabel}</span></div>`;
         }
 
         card += criteriaBadgesHtml(tr.validation?.judge_criteria, 'chat');
@@ -1715,29 +1717,34 @@ function handleBatchStart(data) {
 function handleProgress(data) {
     const { product_id, completed, total, score, title, status } = data;
 
-    // Update progress bar
-    const progressBar = document.getElementById('progress-bar');
-    const progressText = document.getElementById('progress-text');
+    // Update progress bar (skip for "retrying" — no completion yet)
+    if (status !== 'retrying' && completed != null) {
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
 
-    if (progressBar && total > 0) {
-        const pct = Math.round((completed / total) * 100);
-        progressBar.style.width = `${pct}%`;
+        if (progressBar && total > 0) {
+            const pct = Math.round((completed / total) * 100);
+            progressBar.style.width = `${pct}%`;
+        }
+
+        if (progressText) {
+            progressText.textContent = `${completed} / ${total} products`;
+        }
     }
 
-    if (progressText) {
-        progressText.textContent = `${completed} / ${total} products`;
-    }
-
-    // Add a listing card to the grid
+    // Add or update listing card
     addListingCard({
         product_id,
         title: title || product_id,
         score,
         status,
+        issues: data.issues || [],
     });
 
-    // Store result
-    state.batchResults.push(data);
+    // Store result (only final results, not intermediate retrying)
+    if (status !== 'retrying') {
+        state.batchResults.push(data);
+    }
 }
 
 /**
@@ -1836,53 +1843,90 @@ function addListingCard(data) {
     const grid = document.getElementById('listings-grid');
     if (!grid) return;
 
-    const card = document.createElement('div');
-    card.className = 'listing-card view-enter clickable';
-    card.dataset.productId = data.product_id;
-
-    // Make card clickable to open detail modal
-    card.addEventListener('click', () => {
-        const result = (state.fullListings || []).find(
-            l => l.product_id === data.product_id
-        );
-        if (result) {
-            openListingDetail(result);
-        } else {
-            showToast('Loading listing details...', 'info');
-            // Try to load and then open
-            loadListingsData().then(() => {
-                const r = (state.fullListings || []).find(
-                    l => l.product_id === data.product_id
-                );
-                if (r) openListingDetail(r);
-                else showToast('Could not load listing details.', 'error');
-            });
-        }
-    });
-
+    const isRetrying = data.status === 'retrying';
     const isOk = data.status === 'ok';
-    const cardStatusColor = isOk ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50';
-    const cardStatusLabel = isOk ? 'Checked — OK' : 'Needs work';
 
-    const statusIcon = isOk
-        ? '<svg class="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
-        : '<svg class="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>';
+    // Check if a card already exists for this product (update in-place)
+    let card = grid.querySelector(`[data-product-id="${data.product_id}"]`);
+    const isNew = !card;
 
-    card.innerHTML = `
-        <div class="flex items-start justify-between mb-2">
-            <div class="flex items-center gap-2">
-                ${statusIcon}
-                <span class="text-xs text-slate-400 font-mono">${data.product_id}</span>
+    if (isNew) {
+        card = document.createElement('div');
+        card.dataset.productId = data.product_id;
+
+        // Make card clickable to open detail modal
+        card.addEventListener('click', () => {
+            if (card.dataset.retrying === 'true') return; // don't open while retrying
+            const result = (state.fullListings || []).find(
+                l => l.product_id === data.product_id
+            );
+            if (result) {
+                openListingDetail(result);
+            } else {
+                showToast('Loading listing details...', 'info');
+                loadListingsData().then(() => {
+                    const r = (state.fullListings || []).find(
+                        l => l.product_id === data.product_id
+                    );
+                    if (r) openListingDetail(r);
+                    else showToast('Could not load listing details.', 'error');
+                });
+            }
+        });
+    }
+
+    card.dataset.retrying = isRetrying ? 'true' : 'false';
+    card.className = isRetrying
+        ? 'listing-card view-enter'
+        : 'listing-card view-enter clickable';
+
+    if (isRetrying) {
+        // Show spinner + issues while retrying
+        const issuesHtml = (data.issues || []).slice(0, 3).map(
+            i => `<li class="text-[11px] text-amber-600 leading-snug">${escapeHtml(i)}</li>`
+        ).join('');
+
+        card.innerHTML = `
+            <div class="flex items-start justify-between mb-2">
+                <div class="flex items-center gap-2">
+                    <div class="spinner spinner-sm"></div>
+                    <span class="text-xs text-slate-400 font-mono">${data.product_id}</span>
+                </div>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full text-amber-600 bg-amber-50">
+                    Retrying...
+                </span>
             </div>
-            <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${cardStatusColor}">
-                ${cardStatusLabel}
-            </span>
-        </div>
-        <h3 class="listing-card-title text-sm">${escapeHtml(data.title || 'Untitled')}</h3>
-        <p class="text-xs text-slate-400 mt-2">Click to view full listing</p>
-    `;
+            <h3 class="listing-card-title text-sm">${escapeHtml(data.title || 'Generating...')}</h3>
+            ${issuesHtml ? `<ul class="mt-2 space-y-0.5 list-disc list-inside">${issuesHtml}</ul>` : ''}
+            <p class="text-xs text-slate-400 mt-2">Fixing issues and regenerating</p>
+        `;
+    } else {
+        // Final state: ok or failed
+        const cardStatusColor = isOk ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50';
+        const cardStatusLabel = isOk ? 'Checked — OK' : 'Needs work';
 
-    grid.appendChild(card);
+        const statusIcon = isOk
+            ? '<svg class="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
+            : '<svg class="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>';
+
+        card.innerHTML = `
+            <div class="flex items-start justify-between mb-2">
+                <div class="flex items-center gap-2">
+                    ${statusIcon}
+                    <span class="text-xs text-slate-400 font-mono">${data.product_id}</span>
+                </div>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${cardStatusColor}">
+                    ${cardStatusLabel}
+                </span>
+            </div>
+            <h3 class="listing-card-title text-sm">${escapeHtml(data.title || 'Untitled')}</h3>
+            <p class="text-xs text-slate-400 mt-2">Click to view full listing</p>
+        `;
+    }
+
+    if (isNew) {
+        grid.appendChild(card);
+    }
 
     // Scroll grid to show newest
     grid.scrollTop = grid.scrollHeight;
@@ -2325,8 +2369,10 @@ function renderTestResultsSection() {
             ? `<div class="text-xs text-slate-500 mb-2 leading-relaxed">${escapeHtml(descPreview)}</div>`
             : '';
 
+        const priceConf = listing.confidence;
+        const priceConfLabel = priceConf === 'high' ? 'based on pricing strategy' : priceConf === 'medium' ? 'estimated by AI' : 'AI guess';
         const priceHtml = listing.suggested_price
-            ? `<div class="text-xs text-slate-500 mb-2">Price: <span class="font-semibold text-slate-700">$${listing.suggested_price}</span></div>`
+            ? `<div class="text-xs text-slate-500 mb-2">AI price: <span class="font-semibold text-slate-700">$${listing.suggested_price}</span> <span class="text-slate-400">(${priceConfLabel})</span></div>`
             : '';
 
         cardsHtml += `
@@ -2515,6 +2561,7 @@ function openListingDetail(result) {
     const price = listing.suggested_price;
     const confidence = listing.confidence;
     const priceRationale = listing.pricing_rationale || '';
+    const priceConfLabel = confidence === 'high' ? 'Based on pricing strategy' : confidence === 'medium' ? 'Estimated by AI' : 'AI guess';
 
     const overlay = document.createElement('div');
     overlay.className = 'listing-modal-overlay';
@@ -2528,10 +2575,13 @@ function openListingDetail(result) {
             <div class="listing-modal-header">
                 <div>
                     <h2 class="text-lg font-bold text-slate-900">${esc(result.sku || result.product_id)}</h2>
+                    ${price ? `
                     <div class="flex items-center gap-2 mt-1">
-                        ${price ? `<span class="text-lg font-bold text-blue-600">$${price}</span>` : ''}
-                        ${confidence ? `<span class="badge badge-${confidence === 'high' ? 'success' : confidence === 'medium' ? 'warning' : 'error'} text-xs">${confidence}</span>` : ''}
+                        <span class="text-lg font-bold text-blue-600">$${price}</span>
+                        <span class="text-xs text-slate-400">${priceConfLabel}</span>
                     </div>
+                    ${priceRationale ? `<div class="text-xs text-slate-400 mt-0.5">${esc(priceRationale)}</div>` : ''}
+                    ` : ''}
                 </div>
                 <button onclick="closeListingDetail()" class="p-2 hover:bg-slate-100 rounded-lg transition">
                     <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>

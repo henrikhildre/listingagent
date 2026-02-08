@@ -112,6 +112,8 @@ async def _process_product(
     recipe: dict,
     style_profile: dict,
     output_schema: dict,
+    websocket_connections: set | None = None,
+    total: int = 0,
 ) -> dict:
     """
     Generate a listing for a single product.
@@ -172,7 +174,26 @@ async def _process_product(
         validation.get("score", 0),
     )
 
-    issues_feedback = "\n".join(f"- {issue}" for issue in validation.get("issues", []))
+    issues = validation.get("issues", [])
+
+    # Notify frontend that this product is being retried
+    if websocket_connections is not None:
+        first_title = (listing or {}).get("title")
+        await _send_ws_message(
+            websocket_connections,
+            {
+                "type": "progress",
+                "product_id": product_id,
+                "completed": None,
+                "total": total,
+                "score": None,
+                "title": first_title,
+                "status": "retrying",
+                "issues": issues,
+            },
+        )
+
+    issues_feedback = "\n".join(f"- {issue}" for issue in issues)
     retry_prompt = (
         f"{filled_prompt}\n\n"
         f"## IMPORTANT — Previous attempt had these issues, please fix them:\n"
@@ -337,7 +358,8 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
                 )
             try:
                 result = await _process_product(
-                    job_id, product, recipe, style_profile, output_schema
+                    job_id, product, recipe, style_profile, output_schema,
+                    websocket_connections=websocket_connections, total=total,
                 )
             except QuotaExhaustedError as e:
                 logger.error(
