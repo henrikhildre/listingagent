@@ -2,7 +2,7 @@
 
 AI agent that helps marketplace sellers create product listings at scale. Upload your product data, have a conversation about your brand, and let the AI generate consistent, high-quality listings across your entire catalog.
 
-Built with Google Gemini 3 for the [Gemini 3 Hackathon](https://gemini3.devpost.com/).
+Powered by Google Gemini 3 for the [Gemini 3 Hackathon](https://gemini3.devpost.com/).
 
 ## How It Works
 
