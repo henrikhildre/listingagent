@@ -987,6 +987,9 @@ Write a Python script that (IMPORTANT: never use open() — all data is pre-load
    ```
 
 IMPORTANT RULES:
+- Write ONE SINGLE complete, self-contained script. Do NOT split logic across
+  multiple code blocks. All imports, data reading, processing, and result
+  assignment must be in ONE script.
 - The script MUST work on both the sample now AND the full dataset later.
 - Use `{data_var}` as input (a string). Use `image_filenames` (a list of strings).
 - Assign the final JSON string to `result_json`.
@@ -1182,7 +1185,11 @@ The following extraction script had errors when run against the full dataset.
 ## Total Expected Rows
 {sample['total_rows']}
 
-Fix the script to address these errors. Keep the same interface:
+Fix the script to address these errors. Write ONE SINGLE complete, self-contained
+script in a single code block — all imports, data reading, processing, and
+`result_json` assignment must be together. Do NOT split across multiple blocks.
+
+Keep the same interface:
 - Read from `{data_var}` (string variable already in scope) and `image_filenames` (list)
 - Assign JSON string to `result_json`
 - NEVER use open() — data is already provided as a string variable.

@@ -263,15 +263,34 @@ async def generate_code_execution_with_parts(
         model=model_name, contents=parts, config=config
     )
 
-    # Walk response parts to extract the last executable_code block
-    script = None
+    # Walk response parts to extract executable_code blocks
+    all_scripts = []
     text_parts = []
     if response.candidates and response.candidates[0].content:
         for part in response.candidates[0].content.parts:
             if hasattr(part, "executable_code") and part.executable_code:
-                script = part.executable_code.code
+                all_scripts.append(part.executable_code.code)
             if hasattr(part, "text") and part.text:
                 text_parts.append(part.text)
+
+    # Pick the best script: prefer the last self-contained block (has both
+    # data reading and result assignment).  If no single block is complete,
+    # concatenate all blocks so variables defined in earlier blocks are
+    # available to later ones (matching Gemini's sandbox behavior).
+    script = None
+    if all_scripts:
+        for candidate in reversed(all_scripts):
+            has_result = "result_json" in candidate
+            has_data_read = any(
+                kw in candidate
+                for kw in ("csv_data", "json_data", "pd.read_csv", "json.loads")
+            )
+            if has_result and has_data_read:
+                script = candidate
+                break
+        if script is None:
+            # No single block is self-contained — concatenate all
+            script = "\n\n".join(all_scripts)
 
     text_response = "\n".join(text_parts) if text_parts else (response.text or "")
     return text_response, script
