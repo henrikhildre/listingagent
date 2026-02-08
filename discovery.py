@@ -353,7 +353,11 @@ MAX_EXTRACTION_RETRIES = 3
 _ALLOWED_IMPORTS = {"pandas", "pd", "io", "json", "re", "math"}
 
 
-async def build_data_model(job_id: str, conversation_history: list[dict]) -> dict:
+async def build_data_model(
+    job_id: str,
+    conversation_history: list[dict],
+    progress: "Callable[[str], Any] | None" = None,
+) -> dict:
     """Build data_model.json by routing to the best extraction strategy.
 
     Strategy routing:
@@ -372,32 +376,42 @@ async def build_data_model(job_id: str, conversation_history: list[dict]) -> dic
     all_images = sorted(file_summary.get("images", []))
     pasted_text = file_summary.get("pasted_text")
 
+    if progress:
+        await progress("Preparing to build your catalog...")
+
     # Route to extraction strategy
     if spreadsheets:
         # Spreadsheet path — existing code execution pipeline
         sheet_path = uploads_dir / spreadsheets[0]
         data_model = await _build_spreadsheet_data_model(
-            job_path, sheet_path, spreadsheets[0], all_images, conversation_history
+            job_path, sheet_path, spreadsheets[0], all_images, conversation_history,
+            progress=progress,
         )
     elif json_files:
         # JSON path — code execution with json parsing
         json_path = uploads_dir / json_files[0]
         data_model = await _build_json_data_model(
-            job_path, json_path, json_files[0], all_images, conversation_history
+            job_path, json_path, json_files[0], all_images, conversation_history,
+            progress=progress,
         )
     elif pasted_text:
         if len(pasted_text) > MAX_PASTE_DIRECT_EXTRACTION:
             # Large paste — treat as structured data, code execution
             data_model = await _build_large_paste_data_model(
-                job_path, pasted_text, all_images, conversation_history
+                job_path, pasted_text, all_images, conversation_history,
+                progress=progress,
             )
         else:
             # Small paste — direct LLM extraction
+            if progress:
+                await progress("Structuring your product data...")
             data_model = await _build_paste_data_model(
                 pasted_text, all_images, conversation_history
             )
     elif all_images:
         # Image-only — vision extraction
+        if progress:
+            await progress("Identifying products from your photos...")
         data_model = await _build_vision_data_model(
             job_id, all_images, conversation_history
         )
@@ -405,6 +419,8 @@ async def build_data_model(job_id: str, conversation_history: list[dict]) -> dic
         raise ValueError("No data found to process — upload files or paste text first")
 
     # Compute quality report and field stats
+    if progress:
+        await progress("Running final checks...")
     data_model["quality_report"] = _build_quality_report(data_model)
     data_model["field_stats"] = _build_field_stats(data_model)
 
@@ -433,12 +449,15 @@ async def _build_spreadsheet_data_model(
     sheet_filename: str,
     all_images: list[str],
     conversation_history: list[dict],
+    progress: "Callable[[str], Any] | None" = None,
 ) -> dict:
     """Full pipeline: sample → LLM script → server-side exec → validate → iterate.
 
     If a previously saved extraction script matches the column fingerprint of
     this spreadsheet, it is reused without calling the LLM.
     """
+    if progress:
+        await progress("Structuring your product data...")
     sample = read_spreadsheet_sample(sheet_path)
     full_csv = read_full_csv(sheet_path)
     col_fingerprint = _column_fingerprint(sample["headers"])
@@ -459,11 +478,14 @@ async def _build_spreadsheet_data_model(
     products = await _run_and_validate_script(
         script, full_csv, sample["total_rows"], all_images,
         sample, conversation_history, data_format="csv",
+        progress=progress,
     )
 
     # Save the working script for reuse
     _save_extraction_script(job_path, script, col_fingerprint, sample["headers"])
 
+    if progress:
+        await progress("Matching images to products...")
     return _assemble_data_model(
         products, all_images, sheet_filename,
         sample["headers"], sample["total_rows"],
@@ -481,8 +503,11 @@ async def _build_json_data_model(
     json_filename: str,
     all_images: list[str],
     conversation_history: list[dict],
+    progress: "Callable[[str], Any] | None" = None,
 ) -> dict:
     """Extract products from a JSON file using the code execution pipeline."""
+    if progress:
+        await progress("Structuring your product data...")
     sample = read_json_sample(json_path)
     full_json = read_full_json(json_path)
     col_fingerprint = _column_fingerprint(sample["headers"])
@@ -500,10 +525,13 @@ async def _build_json_data_model(
     products = await _run_and_validate_script(
         script, full_json, sample["total_rows"], all_images,
         sample, conversation_history, data_format="json",
+        progress=progress,
     )
 
     _save_extraction_script(job_path, script, col_fingerprint, sample["headers"])
 
+    if progress:
+        await progress("Matching images to products...")
     return _assemble_data_model(
         products, all_images, json_filename,
         sample["headers"], sample["total_rows"],
@@ -619,6 +647,7 @@ async def _build_large_paste_data_model(
     pasted_text: str,
     all_images: list[str],
     conversation_history: list[dict],
+    progress: "Callable[[str], Any] | None" = None,
 ) -> dict:
     """Handle large pasted text by converting to a data file and using code execution.
 
@@ -627,6 +656,8 @@ async def _build_large_paste_data_model(
     """
     import tempfile
 
+    if progress:
+        await progress("Structuring your product data...")
     # Save pasted text to a temp CSV-like file for the code execution pipeline
     temp_path = job_path / "uploads" / "_pasted_input.txt"
     temp_path.write_text(pasted_text, encoding="utf-8")
@@ -719,6 +750,7 @@ IMPORTANT:
     products = await _run_and_validate_script(
         script, pasted_text, total_lines, all_images,
         sample, conversation_history, data_format="csv",
+        progress=progress,
     )
 
     fields_discovered = set()
@@ -1015,6 +1047,7 @@ async def _run_and_validate_script(
     sample: dict,
     conversation_history: list[dict],
     data_format: str = "csv",
+    progress: "Callable[[str], Any] | None" = None,
 ) -> list[dict]:
     """Run extraction script server-side, validate, fix if needed.
 
@@ -1023,12 +1056,16 @@ async def _run_and_validate_script(
     current_script = script
 
     for attempt in range(MAX_EXTRACTION_RETRIES):
+        if progress:
+            await progress("Extracting details for each product...")
         products, errors = _execute_extraction_script(
             current_script, full_data, all_images, expected_rows,
             data_format=data_format,
         )
 
         if not errors:
+            if progress and products:
+                await progress(f"Found {len(products)} products — cleaning up the details...")
             return products
 
         logger.warning(
@@ -1037,6 +1074,8 @@ async def _run_and_validate_script(
         )
 
         if attempt < MAX_EXTRACTION_RETRIES - 1:
+            if progress:
+                await progress("Tidying up a few things...")
             fixed = await _fix_extraction_script(
                 current_script, errors, sample, all_images,
                 data_format=data_format,

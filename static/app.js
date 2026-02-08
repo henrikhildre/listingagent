@@ -993,57 +993,57 @@ function removeTypingIndicator(indicator) {
  */
 async function buildDataModel() {
     setChatInputEnabled(false);
-    const progress = showInlineProgress('Building extraction script...');
-
-    // Rotate status messages so the user knows things are progressing
-    const steps = [
-        [4000,  'Generating extraction script...'],
-        [10000, 'Running script on your data...'],
-        [18000, 'Validating extracted products...'],
-        [28000, 'Matching images to products...'],
-        [40000, 'Almost there — running quality checks...'],
-    ];
-    const timers = steps.map(([ms, msg]) =>
-        setTimeout(() => updateInlineProgress(progress, msg), ms)
-    );
+    const progress = showInlineProgress('Preparing to build your catalog...');
 
     try {
-        const result = await api('/api/build-data-model', {
+        const response = await fetch('/api/build-data-model', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 job_id: state.jobId,
                 conversation_history: state.conversationHistory,
             }),
         });
-        timers.forEach(clearTimeout);
 
-        state.dataModel = result.data_model;
-
-        const qr = result.quality_report || {};
-        const productCount = qr.total_products || (state.dataModel.products || []).length;
-        let summary = `Extracted ${productCount} products`;
-        const fields = qr.fields_discovered || [];
-        if (fields.length) summary += ` with ${fields.length} fields`;
-        if (qr.images_matched) summary += `, ${qr.images_matched} images matched`;
-        summary += '.';
-
-        // Show warnings as a quality report message
-        const warnings = qr.warnings || [];
-        if (warnings.length) {
-            const warningLines = warnings.map(w => `- ${w}`).join('\n');
-            addMessage('assistant', `**Data Quality Report**\n${summary}\n\n**Heads up:**\n${warningLines}\n\nStarting brand profile...`);
-        } else {
-            addMessage('assistant', `**Data Quality Report**\n${summary} Everything looks clean.\n\nStarting brand profile...`);
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `Request failed (${response.status})`);
         }
-        updateInlineProgress(progress, `Mapped ${productCount} products — starting brand profile...`);
 
-        updateContextPanel();
+        for await (const event of readSSE(response)) {
+            if (event.type === 'progress') {
+                updateInlineProgress(progress, event.data.text);
+            } else if (event.type === 'complete') {
+                const result = event.data;
+                state.dataModel = result.data_model;
 
-        // Transition to interview (progress element passed for continuity)
-        await startInterview(progress);
+                const qr = result.quality_report || {};
+                const productCount = qr.total_products || (state.dataModel.products || []).length;
+                let summary = `Extracted ${productCount} products`;
+                const fields = qr.fields_discovered || [];
+                if (fields.length) summary += ` with ${fields.length} fields`;
+                if (qr.images_matched) summary += `, ${qr.images_matched} images matched`;
+                summary += '.';
 
+                const warnings = qr.warnings || [];
+                if (warnings.length) {
+                    const warningLines = warnings.map(w => `- ${w}`).join('\n');
+                    addMessage('assistant', `**Data Quality Report**\n${summary}\n\n**Heads up:**\n${warningLines}\n\nStarting brand profile...`);
+                } else {
+                    addMessage('assistant', `**Data Quality Report**\n${summary} Everything looks clean.\n\nStarting brand profile...`);
+                }
+                updateInlineProgress(progress, `Mapped ${productCount} products — starting brand profile...`);
+
+                updateContextPanel();
+                await startInterview(progress);
+            } else if (event.type === 'error') {
+                removeInlineProgress(progress);
+                setChatInputEnabled(true);
+                showToast('Failed to build data model: ' + event.data.text, 'error');
+                addMessage('assistant', 'I had trouble finalizing the data model. Could you provide more details about how your files are organized?');
+            }
+        }
     } catch (error) {
-        timers.forEach(clearTimeout);
         removeInlineProgress(progress);
         setChatInputEnabled(true);
         showToast('Failed to build data model: ' + error.message, 'error');

@@ -609,23 +609,57 @@ async def chat(req: ChatRequest):
 
 @app.post("/api/build-data-model")
 async def build_data_model(req: BuildDataModelRequest):
-    """Finalize the data model from the discovery conversation (Phase 1 -> 2 transition)."""
+    """Finalize the data model from the discovery conversation (Phase 1 -> 2 transition).
+
+    Streams progress via Server-Sent Events, then emits a complete or error event.
+    """
     _job_exists(req.job_id)
 
-    try:
-        data_model = await discovery.build_data_model(
-            req.job_id, req.conversation_history
-        )
-    except Exception as e:
-        logger.exception("build_data_model failed for job %s", req.job_id)
-        raise HTTPException(status_code=500, detail=str(e))
+    queue: asyncio.Queue = asyncio.Queue()
 
-    return {
-        "job_id": req.job_id,
-        "data_model": data_model,
-        "product_count": len(data_model.get("products", [])),
-        "quality_report": data_model.get("quality_report", {}),
-    }
+    async def on_progress(text: str):
+        await queue.put(_sse_event("progress", {"text": text}))
+
+    async def run_build():
+        try:
+            data_model = await discovery.build_data_model(
+                req.job_id, req.conversation_history, progress=on_progress,
+            )
+            await queue.put(_sse_event("complete", {
+                "job_id": req.job_id,
+                "data_model": data_model,
+                "product_count": len(data_model.get("products", [])),
+                "quality_report": data_model.get("quality_report", {}),
+            }))
+        except Exception as e:
+            logger.exception("build_data_model failed for job %s", req.job_id)
+            await queue.put(_sse_event("error", {"text": str(e)}))
+        finally:
+            await queue.put(None)  # sentinel
+
+    async def event_stream():
+        task = asyncio.create_task(run_build())
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if item is None:
+                    break
+                yield item
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
