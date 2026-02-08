@@ -507,19 +507,78 @@ async function pasteAndExplore() {
 }
 
 /**
- * Load demo dataset and start discovery.
+ * Open the demo picker modal and fetch the catalog.
  */
-async function loadDemo() {
-    showLoading('Loading sample data...');
+async function openDemoPicker() {
+    const overlay = document.getElementById('demo-picker-overlay');
+    const grid = document.getElementById('demo-picker-grid');
+    overlay.classList.remove('hidden');
+    grid.innerHTML = '<div class="col-span-full flex justify-center py-8"><div class="spinner"></div></div>';
 
     try {
-        const result = await api('/api/load-demo', { method: 'POST' });
+        const data = await api('/api/demo-catalog');
+        renderDemoGrid(data.demos, grid);
+    } catch (err) {
+        grid.innerHTML = `<p class="col-span-full text-center text-red-500 text-sm py-8">Failed to load demos: ${err.message}</p>`;
+    }
+}
+
+function closeDemoPicker() {
+    document.getElementById('demo-picker-overlay').classList.add('hidden');
+}
+
+const DEMO_ICONS = {
+    table: `<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M10.875 12c-.621 0-1.125.504-1.125 1.125M12 12c.621 0 1.125.504 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 0v1.5c0 .621-.504 1.125-1.125 1.125M12 15.375c0-.621.504-1.125 1.125-1.125"/></svg>`,
+    clipboard: `<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></svg>`,
+    code: `<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"/></svg>`,
+    photo: `<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M2.25 18V6a2.25 2.25 0 012.25-2.25h15A2.25 2.25 0 0121.75 6v12A2.25 2.25 0 0119.5 20.25h-15A2.25 2.25 0 012.25 18z"/></svg>`,
+};
+
+function renderDemoGrid(demos, container) {
+    container.innerHTML = '';
+    for (const demo of demos) {
+        const card = document.createElement('button');
+        card.className = 'demo-card';
+        card.onclick = () => confirmDemoSelection(demo.id, demo.title);
+
+        // Build preview section
+        let previewHtml = '';
+        if (demo.preview_images && demo.preview_images.length) {
+            const imgs = demo.preview_images.slice(0, 3).map(f =>
+                `<img src="/api/demo-image/${demo.id}/${f}" alt="" class="demo-card-thumb">`
+            ).join('');
+            previewHtml = `<div class="demo-card-thumbs">${imgs}</div>`;
+        } else if (demo.preview_text) {
+            const escaped = demo.preview_text.slice(0, 120).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            previewHtml = `<div class="demo-card-text-preview">${escaped}...</div>`;
+        }
+
+        card.innerHTML = `
+            <div class="demo-card-header">
+                <div class="demo-card-icon">${DEMO_ICONS[demo.icon] || DEMO_ICONS.table}</div>
+                <span class="demo-card-tag">${demo.tag}</span>
+            </div>
+            <div class="demo-card-title">${demo.title}</div>
+            <div class="demo-card-desc">${demo.description}</div>
+            ${previewHtml}
+        `;
+        container.appendChild(card);
+    }
+}
+
+async function confirmDemoSelection(demoId, demoTitle) {
+    closeDemoPicker();
+    showLoading(`Loading ${demoTitle}...`);
+
+    try {
+        const result = await api('/api/load-demo', {
+            method: 'POST',
+            body: JSON.stringify({ demo_id: demoId }),
+        });
 
         state.jobId = result.job_id;
         hideLoading();
         showToast(`Demo loaded: ${result.file_count} files.`, 'success');
-
-        // Transition to discovery (inline progress used inside startDiscovery)
         await startDiscovery();
     } catch (error) {
         hideLoading();
@@ -2330,8 +2389,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Paste explore button
     document.getElementById('paste-explore-btn')?.addEventListener('click', pasteAndExplore);
 
-    // Demo button: load sample data and start discovery
-    document.getElementById('demo-btn')?.addEventListener('click', loadDemo);
+    // Demo button: open picker modal
+    document.getElementById('demo-btn')?.addEventListener('click', openDemoPicker);
 
     // Send button in chat
     const sendBtn = document.getElementById('send-btn');

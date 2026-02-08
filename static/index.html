@@ -381,6 +381,28 @@
         </main>
     </div>
 
+    <!-- ============================================
+         DEMO PICKER MODAL
+         ============================================ -->
+    <div id="demo-picker-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm hidden" onclick="if(event.target===this)closeDemoPicker()">
+        <div class="demo-picker-modal bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col" style="animation: fadeInUp var(--transition-medium)">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800">Choose a demo dataset</h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Each demo shows a different input method</p>
+                </div>
+                <button onclick="closeDemoPicker()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <!-- Demo grid -->
+            <div id="demo-picker-grid" class="p-5 overflow-y-auto flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
     <!-- App Script -->
     <script src="/static/app.js"></script>
 </body>

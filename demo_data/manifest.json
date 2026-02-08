@@ -1,0 +1,53 @@
+{
+  "demos": [
+    {
+      "id": "vintage_inventory",
+      "title": "Vintage Clothing Store",
+      "description": "A curated vintage clothing shop with 15 products, complete with a spreadsheet inventory and product photos.",
+      "input_method": "file_upload",
+      "tag": "Spreadsheet + Images",
+      "icon": "table",
+      "files": {
+        "spreadsheet": "vintage_inventory.xlsx",
+        "images_dir": "images",
+        "image_count": 15
+      },
+      "preview_images": ["VLJ-001.jpg", "RDJ-002.jpg", "SS-003.jpg"]
+    },
+    {
+      "id": "jewelry_notes",
+      "title": "Handmade Jewelry Notes",
+      "description": "Messy seller notes for a handmade jewelry business. Abbreviations, notes-to-self, inconsistent formatting.",
+      "input_method": "paste_text",
+      "tag": "Pasted Text",
+      "icon": "clipboard",
+      "files": {
+        "text_file": "paste_text.txt"
+      }
+    },
+    {
+      "id": "camera_collection",
+      "title": "Vintage Camera Collection",
+      "description": "A well-structured JSON inventory of 10 collectible film cameras with detailed condition notes.",
+      "input_method": "json",
+      "tag": "JSON Data",
+      "icon": "code",
+      "files": {
+        "json_file": "cameras.json"
+      }
+    },
+    {
+      "id": "home_decor_photos",
+      "title": "Home Decor \u2014 Photos Only",
+      "description": "Just product photos, no spreadsheet or text. The AI will work from the images alone.",
+      "input_method": "images_only",
+      "tag": "Images Only",
+      "icon": "photo",
+      "files": {
+        "images_dir": "images",
+        "image_count": 8
+      },
+      "preview_images": ["vintage-leather-jacket.jpg", "silk-scarf-floral.jpg", "retro-sunglasses.jpg"]
+    }
+  ]
+}

@@ -109,6 +109,7 @@ _MAX_LOGIN_ATTEMPTS = 5
 _LOGIN_WINDOW_SECONDS = 60
 
 _PUBLIC_PATHS = frozenset({"/", "/api/login", "/api/auth-check"})
+_PUBLIC_PREFIXES = ("/api/demo-catalog", "/api/demo-image/")
 
 
 def _is_authenticated(request: Request) -> bool:
@@ -146,6 +147,7 @@ async def auth_middleware(request: Request, call_next):
     if (
         path in _PUBLIC_PATHS
         or path.startswith("/static/")
+        or any(path.startswith(p) for p in _PUBLIC_PREFIXES)
         or request.headers.get("upgrade", "").lower() == "websocket"
     ):
         return await call_next(request)
@@ -325,38 +327,133 @@ async def upload_files(files: list[UploadFile] = File(...)):
 
 
 # ---------------------------------------------------------------------------
-# 1b. POST /api/load-demo
+# 1b. Demo data endpoints
 # ---------------------------------------------------------------------------
 
 DEMO_DATA_DIR = Path(__file__).parent / "demo_data"
 
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+@app.get("/api/demo-catalog")
+async def demo_catalog():
+    """Return the demo manifest enriched with preview text for paste/JSON demos."""
+    manifest_path = DEMO_DATA_DIR / "manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="Demo manifest not found.")
+
+    manifest = json.loads(manifest_path.read_text())
+    demos = manifest.get("demos", [])
+
+    for demo in demos:
+        demo_dir = DEMO_DATA_DIR / demo["id"]
+        method = demo.get("input_method")
+        files = demo.get("files", {})
+
+        if method == "paste_text" and files.get("text_file"):
+            text_path = demo_dir / files["text_file"]
+            if text_path.exists():
+                demo["preview_text"] = text_path.read_text(encoding="utf-8")[:500]
+
+        elif method == "json" and files.get("json_file"):
+            json_path = demo_dir / files["json_file"]
+            if json_path.exists():
+                demo["preview_text"] = json_path.read_text(encoding="utf-8")[:500]
+
+        elif method == "images_only":
+            images_dir = demo_dir / files.get("images_dir", "images")
+            if images_dir.exists():
+                demo["all_images"] = sorted(
+                    f.name for f in images_dir.iterdir()
+                    if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES
+                )
+
+    return {"demos": demos}
+
+
+@app.get("/api/demo-image/{demo_id}/{filename}")
+async def demo_image(demo_id: str, filename: str):
+    """Serve a demo image for thumbnail previews. Path-traversal-safe."""
+    # Sanitize inputs
+    safe_demo_id = Path(demo_id).name
+    safe_filename = Path(filename).name
+    if safe_demo_id != demo_id or safe_filename != filename:
+        raise HTTPException(status_code=400, detail="Invalid path.")
+
+    image_path = DEMO_DATA_DIR / safe_demo_id / "images" / safe_filename
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    return FileResponse(str(image_path))
+
+
+class LoadDemoRequest(BaseModel):
+    demo_id: str = "vintage_inventory"
+
 
 @app.post("/api/load-demo")
-async def load_demo():
-    """Load bundled demo dataset into a new job. Returns same shape as /api/upload."""
-    if not DEMO_DATA_DIR.exists():
+async def load_demo(req: LoadDemoRequest = LoadDemoRequest()):
+    """Load a bundled demo dataset into a new job. Returns same shape as /api/upload."""
+    demo_dir = DEMO_DATA_DIR / req.demo_id
+    if not demo_dir.exists():
         raise HTTPException(status_code=404, detail="Demo data not found on server.")
+
+    # Load manifest to get demo config
+    manifest_path = DEMO_DATA_DIR / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    demo_config = next(
+        (d for d in manifest.get("demos", []) if d["id"] == req.demo_id), None
+    )
+    if not demo_config:
+        raise HTTPException(status_code=404, detail=f"Demo '{req.demo_id}' not found.")
 
     job_id = str(uuid4())
     job_path = create_job_directory(job_id)
     uploads_dir = job_path / "uploads"
 
+    method = demo_config.get("input_method")
+    files = demo_config.get("files", {})
     saved_files = []
 
-    # Copy spreadsheet
-    for f in DEMO_DATA_DIR.glob("*.xlsx"):
-        shutil.copy2(f, uploads_dir / f.name)
-        saved_files.append(f.name)
+    if method == "file_upload":
+        # Copy spreadsheet
+        spreadsheet = files.get("spreadsheet")
+        if spreadsheet:
+            src = demo_dir / spreadsheet
+            if src.exists():
+                shutil.copy2(src, uploads_dir / src.name)
+                saved_files.append(src.name)
+        # Copy images
+        images_dir = demo_dir / files.get("images_dir", "images")
+        if images_dir.exists():
+            for f in sorted(images_dir.iterdir()):
+                if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES:
+                    shutil.copy2(f, uploads_dir / f.name)
+                    saved_files.append(f.name)
 
-    # Copy images
-    images_dir = DEMO_DATA_DIR / "images"
-    if images_dir.exists():
-        for f in sorted(images_dir.iterdir()):
-            if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
-                shutil.copy2(f, uploads_dir / f.name)
-                saved_files.append(f.name)
+    elif method == "paste_text":
+        text_file = files.get("text_file")
+        if text_file:
+            text = (demo_dir / text_file).read_text(encoding="utf-8")
+            save_pasted_text(job_id, text)
 
-    logger.info("Loaded demo data for job %s: %d files", job_id, len(saved_files))
+    elif method == "json":
+        json_file = files.get("json_file")
+        if json_file:
+            src = demo_dir / json_file
+            if src.exists():
+                shutil.copy2(src, uploads_dir / src.name)
+                saved_files.append(src.name)
+
+    elif method == "images_only":
+        images_dir = demo_dir / files.get("images_dir", "images")
+        if images_dir.exists():
+            for f in sorted(images_dir.iterdir()):
+                if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES:
+                    shutil.copy2(f, uploads_dir / f.name)
+                    saved_files.append(f.name)
+
+    logger.info("Loaded demo '%s' for job %s: %d files", req.demo_id, job_id, len(saved_files))
 
     return {
         "job_id": job_id,
