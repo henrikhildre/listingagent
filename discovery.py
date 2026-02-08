@@ -40,6 +40,7 @@ from file_utils import (
     read_spreadsheet_sample,
 )
 from gemini_client import (
+    BATCH_MODEL,
     extract_python_code,
     generate_with_code_execution,
     generate_with_images,
@@ -747,7 +748,9 @@ IMPORTANT:
 Return your script inside a single ```python code block."""
 
     full_prompt = f"{prompt}\n\n## Sample Text\n```\n{sample['sample_csv']}\n```"
-    text_response = await generate_with_text(full_prompt, thinking_level="high")
+    text_response = await generate_with_text(
+        full_prompt, model=BATCH_MODEL, thinking_level="medium",
+    )
     script = extract_python_code(text_response)
 
     if not script:
@@ -1040,7 +1043,9 @@ Return your script inside a single ```python code block."""
     full_prompt = f"{prompt}\n\n## Sample Data\n```\n{sample_data}\n```"
 
     for attempt in range(2):
-        text_response = await generate_with_text(full_prompt, thinking_level="high")
+        text_response = await generate_with_text(
+            full_prompt, model=BATCH_MODEL, thinking_level="medium",
+        )
         script = extract_python_code(text_response)
         if script:
             return script, text_response
@@ -1083,6 +1088,13 @@ async def _run_and_validate_script(
         )
 
         if attempt < MAX_EXTRACTION_RETRIES - 1:
+            # Try fast local fix first (syntax errors, etc.)
+            local_fix = _try_local_fix(current_script, errors)
+            if local_fix:
+                logger.info("Applied local fix for errors: %s", errors[:2])
+                current_script = local_fix
+                continue
+
             if progress:
                 await progress("Tidying up a few things...")
             fixed = await _fix_extraction_script(
@@ -1219,6 +1231,66 @@ def _execute_extraction_script(
     return products, errors
 
 
+def _try_local_fix(script: str, errors: list[str]) -> str | None:
+    """Attempt to fix common script errors locally without an LLM call.
+
+    Very conservative: only fixes the exact error line, and verifies the
+    result parses cleanly. Returns None (fall through to LLM) if anything
+    is uncertain.
+    """
+    error_str = " ".join(errors)
+    if "leading zeros" not in error_str:
+        return None
+
+    # Use ast.parse to find the exact offending line
+    error_lineno = None
+    try:
+        ast.parse(script)
+        return None  # parses fine, nothing to fix locally
+    except SyntaxError as e:
+        if not e.lineno or "leading zeros" not in str(e):
+            return None
+        error_lineno = e.lineno
+
+    lines = script.splitlines()
+    line_idx = error_lineno - 1
+    if not (0 <= line_idx < len(lines)):
+        return None
+
+    # Only replace leading-zero numeric literals (e.g. 001 -> 1) on
+    # the offending line. The pattern requires the 0-prefix to NOT be
+    # inside a string, but since we're targeting a line the parser
+    # flagged as a syntax error for this exact reason, the bare numeric
+    # literal is the cause. We still verify with ast.parse afterward.
+    original = lines[line_idx]
+    fixed_line = re.sub(r'(?<!["\'\w])0+(\d+)(?!["\'\w])', r'\1', original)
+    if fixed_line == original:
+        return None
+
+    lines[line_idx] = fixed_line
+    fixed_script = "\n".join(lines)
+
+    # Keep fixing if there are more offending lines (LLM may use
+    # leading zeros in multiple places)
+    for _ in range(20):  # safety bound
+        try:
+            ast.parse(fixed_script)
+            return fixed_script
+        except SyntaxError as e2:
+            if not e2.lineno or "leading zeros" not in str(e2):
+                return None  # different error, bail
+            idx = e2.lineno - 1
+            if not (0 <= idx < len(lines)):
+                return None
+            orig = lines[idx]
+            lines[idx] = re.sub(r'(?<!["\'\w])0+(\d+)(?!["\'\w])', r'\1', orig)
+            if lines[idx] == orig:
+                return None  # can't fix this line
+            fixed_script = "\n".join(lines)
+
+    return None
+
+
 async def _fix_extraction_script(
     script: str,
     errors: list[str],
@@ -1263,7 +1335,9 @@ Return the fixed script inside a single ```python code block."""
 
     full_prompt = f"{prompt}\n\n## Sample Data\n```\n{sample_data}\n```"
     for attempt in range(2):
-        text_response = await generate_with_text(full_prompt, thinking_level="high")
+        text_response = await generate_with_text(
+            full_prompt, model=BATCH_MODEL, thinking_level="low",
+        )
         fixed = extract_python_code(text_response)
         if fixed:
             return fixed
