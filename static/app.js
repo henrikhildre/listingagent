@@ -519,10 +519,9 @@ async function uploadFiles() {
         hideLoading();
         showToast(`${state.uploadedFiles.length} files uploaded successfully.`, 'success');
 
-        // Check for pipeline cache hit
+        // Stash cache info for after preview
         if (result.cache_hit && result.cache_meta) {
-            showCacheHitDialog(result.cache_meta, result.fingerprint);
-            return;
+            state._pendingCache = { meta: result.cache_meta, fingerprint: result.fingerprint };
         }
 
         // Show data preview before starting discovery
@@ -645,10 +644,9 @@ async function confirmDemoSelection(demoId, demoTitle) {
         hideLoading();
         showToast(`Demo loaded: ${result.file_count} files.`, 'success');
 
-        // Check for pipeline cache hit
+        // Stash cache info for after preview
         if (result.cache_hit && result.cache_meta) {
-            showCacheHitDialog(result.cache_meta, result.fingerprint);
-            return;
+            state._pendingCache = { meta: result.cache_meta, fingerprint: result.fingerprint };
         }
 
         await showDataPreview();
@@ -889,7 +887,13 @@ function closeDataPreview(proceed) {
     const overlay = document.getElementById('data-preview-overlay');
     if (overlay) overlay.remove();
     if (proceed) {
-        startDiscovery();
+        const pending = state._pendingCache;
+        state._pendingCache = null;
+        if (pending) {
+            showCacheHitDialog(pending.meta, pending.fingerprint);
+        } else {
+            startDiscovery();
+        }
     }
 }
 
