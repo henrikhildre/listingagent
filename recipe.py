@@ -685,6 +685,17 @@ async def refine_recipe(
             entry["price"] = listing.get("suggested_price")
         results_summary.append(entry)
 
+    # Build compact style context — only the fields the LLM needs for tone/rules
+    style_context = {
+        k: style_profile[k]
+        for k in (
+            "platform", "brand_voice", "target_buyer", "pricing_strategy",
+            "title_format", "description_structure", "avg_description_length",
+            "tags_style", "always_mention",
+        )
+        if k in style_profile
+    }
+
     prompt = f"""You are refining a product listing recipe based on user feedback.
 
 ## Current Recipe
@@ -692,14 +703,11 @@ async def refine_recipe(
 ### Prompt Template
 {recipe["prompt_template"]}
 
-### Output Schema
-{json.dumps(recipe.get("output_schema", DEFAULT_OUTPUT_SCHEMA), indent=2)}
-
 ### Validation Code
 {recipe.get("validation_code", DEFAULT_VALIDATION_CODE)}
 
-## Style Profile
-{json.dumps(style_profile, indent=2)}
+## Style Context
+{json.dumps(style_context, indent=2)}
 
 ## Test Results
 {json.dumps(results_summary, indent=2)}
@@ -708,13 +716,10 @@ async def refine_recipe(
 {user_feedback}
 
 ## Your Task
-Update the recipe to address the user's feedback. You may modify any of the
-three artifacts (prompt_template, output_schema, validation_code).
-
-Think carefully about:
-- What specifically the user wants changed
-- How the test results relate to the feedback
-- Whether the prompt, schema, or validation (or all three) need updating
+Update the recipe to address the feedback. You may modify any of the three
+artifacts (prompt_template, output_schema, validation_code). The output_schema
+is unchanged unless you specifically need to add/remove fields — if unchanged,
+echo the current schema from the recipe.
 
 Respond with EXACTLY this JSON structure (no markdown fencing):
 {{
@@ -1103,13 +1108,10 @@ async def _judge_single_criterion(
 - Suggested price: {listing.get("suggested_price", "N/A")}
 
 ## Instructions
-1. First, analyze the listing against this specific criterion step by step.
-2. Then give your verdict.
-
-Important: A longer listing is NOT automatically better. Evaluate based on quality and relevance, not length.
+Evaluate the listing against this criterion. A longer listing is NOT automatically better.
 
 Respond with EXACTLY this JSON (no markdown fencing):
-{{"reasoning": "your step-by-step analysis...", "pass": true_or_false}}"""
+{{"reasoning": "1-2 sentence justification", "pass": true_or_false}}"""
 
     try:
         result = await generate_structured(

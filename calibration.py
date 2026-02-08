@@ -242,7 +242,7 @@ async def start_interview(job_id: str, data_model: dict) -> str:
         "already know from their data, and ask your first question."
     )
 
-    response_text = await generate_with_text(prompt, thinking_level="high")
+    response_text = await generate_with_text(prompt, thinking_level="medium")
 
     # Save the opening exchange
     conversation = [{"role": "assistant", "content": response_text}]
@@ -296,7 +296,7 @@ async def process_message(
         user_message=user_message,
     )
 
-    response_text = await generate_with_text(prompt, thinking_level="high")
+    response_text = await generate_with_text(prompt, thinking_level="medium")
 
     # Check if the model decided the profile is complete
     style_profile = _extract_style_profile(response_text)

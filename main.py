@@ -208,6 +208,19 @@ async def auth_check(request: Request):
     return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
 
 
+@app.get("/api/token-usage")
+async def token_usage():
+    from gemini_client import get_token_usage
+    return get_token_usage()
+
+
+@app.post("/api/token-usage/reset")
+async def token_usage_reset():
+    from gemini_client import reset_token_usage
+    reset_token_usage()
+    return {"status": "reset"}
+
+
 # ---------------------------------------------------------------------------
 # Global state
 # ---------------------------------------------------------------------------
@@ -566,8 +579,10 @@ async def job_image(job_id: str, filename: str):
 @app.post("/api/discover")
 async def discover(req: JobIdRequest):
     """Categorize uploads and run LLM-driven data exploration (Phase 1)."""
+    from gemini_client import start_step, end_step
     _job_exists(req.job_id)
 
+    start_step("discover")
     try:
         file_summary = await discovery.categorize_uploads(req.job_id)
         analysis = await discovery.explore_data(req.job_id, file_summary)
@@ -582,6 +597,8 @@ async def discover(req: JobIdRequest):
     recipe_data = _load_json_artifact(job_path, "recipe.json")
     if recipe_data and recipe_data.get("approved"):
         has_approved_recipe = True
+
+    end_step("discover")
 
     return {
         "job_id": req.job_id,
@@ -609,6 +626,8 @@ async def chat(req: ChatRequest):
     job_path = _job_exists(req.job_id)
     phase = _determine_phase(job_path)
 
+    from gemini_client import start_step, end_step
+
     try:
         # --- Phase 2: Interview ---
         if phase in ("discovering", "interviewing"):
@@ -616,9 +635,11 @@ async def chat(req: ChatRequest):
 
             # First message after discovery -- kick off the interview
             if not req.conversation_history and data_model:
+                start_step("interview")
                 response_text = await calibration.start_interview(
                     req.job_id, data_model
                 )
+                end_step("interview")
                 return {
                     "response": response_text,
                     "phase": "interviewing",
@@ -626,11 +647,16 @@ async def chat(req: ChatRequest):
                 }
 
             # Ongoing interview
+            start_step("interview")
             result = await calibration.process_message(
                 req.job_id,
                 req.message,
                 req.conversation_history,
             )
+            step_info = end_step("interview")
+            # If the profile is ready, this was the final interview step
+            if result["phase"] == "profile_ready":
+                logger.info("Interview complete — total interview cost included in step history")
             return {
                 "response": result["response"],
                 "phase": result["phase"],
@@ -646,6 +672,7 @@ async def chat(req: ChatRequest):
                     "phase": "start_recipe",
                 }
 
+            start_step("recipe_refine")
             test_results = current_recipe.get("test_results", [])
             updated_recipe = await recipe_module.refine_recipe(
                 req.job_id,
@@ -653,6 +680,7 @@ async def chat(req: ChatRequest):
                 req.message,
                 test_results,
             )
+            end_step("recipe_refine")
 
             return {
                 "response": updated_recipe.get(
@@ -694,17 +722,22 @@ async def build_data_model(req: BuildDataModelRequest):
         await queue.put(_sse_event("progress", {"text": text}))
 
     async def run_build():
+        from gemini_client import start_step, end_step
+        start_step("build_data_model")
         try:
             data_model = await discovery.build_data_model(
                 req.job_id, req.conversation_history, progress=on_progress,
             )
+            step_summary = end_step("build_data_model")
             await queue.put(_sse_event("complete", {
                 "job_id": req.job_id,
                 "data_model": data_model,
                 "product_count": len(data_model.get("products", [])),
                 "quality_report": data_model.get("quality_report", {}),
+                "token_cost": step_summary,
             }))
         except Exception as e:
+            end_step("build_data_model")
             logger.exception("build_data_model failed for job %s", req.job_id)
             await queue.put(_sse_event("error", {"text": str(e)}))
         finally:
@@ -743,6 +776,7 @@ async def build_data_model(req: BuildDataModelRequest):
 @app.post("/api/test-recipe")
 async def test_recipe_endpoint(req: TestRecipeRequest):
     """Draft a recipe if none exists, then test it on sample products."""
+    from gemini_client import start_step, end_step, estimate_batch_cost
     job_path = _job_exists(req.job_id)
 
     try:
@@ -764,19 +798,28 @@ async def test_recipe_endpoint(req: TestRecipeRequest):
         # Draft recipe if it doesn't exist yet
         current_recipe = _load_json_artifact(job_path, "recipe.json")
         if not current_recipe:
+            start_step("draft_recipe")
             current_recipe = await recipe_module.draft_recipe(
                 req.job_id, style_profile, data_model
             )
+            end_step("draft_recipe")
 
         # Test the recipe
+        start_step("test_recipe")
         test_results = await recipe_module.test_recipe(
             req.job_id,
             current_recipe,
             sample_product_ids=req.sample_product_ids,
         )
+        step_info = end_step("test_recipe")
 
         # Reload recipe (test_recipe saves updated results)
         current_recipe = _load_json_artifact(job_path, "recipe.json")
+
+        # Project full batch cost from sample
+        total_products = len(data_model.get("products", []))
+        sample_count = len(test_results)
+        cost_estimate = estimate_batch_cost(sample_count, total_products)
 
     except HTTPException:
         raise
@@ -788,6 +831,7 @@ async def test_recipe_endpoint(req: TestRecipeRequest):
         "job_id": req.job_id,
         "recipe": current_recipe,
         "test_results": test_results,
+        "cost_estimate": cost_estimate,
     }
 
 
@@ -810,6 +854,7 @@ async def auto_refine(req: JobIdRequest):
     job_path = _job_exists(req.job_id)
 
     async def event_stream():
+        from gemini_client import start_step, end_step, estimate_batch_cost
         try:
             style_profile = _load_json_artifact(job_path, "style_profile.json")
             data_model = _load_json_artifact(job_path, "data_model.json")
@@ -820,17 +865,23 @@ async def auto_refine(req: JobIdRequest):
                 )
                 return
 
+            total_products = len(data_model.get("products", []))
+
             # 1. Draft recipe if needed
             current_recipe = _load_json_artifact(job_path, "recipe.json")
             if not current_recipe:
                 yield _sse_event("progress", {"text": "Drafting listing template..."})
+                start_step("draft_recipe")
                 current_recipe = await recipe_module.draft_recipe(
                     req.job_id, style_profile, data_model
                 )
+                end_step("draft_recipe")
 
             # 2. Initial test
             yield _sse_event("progress", {"text": "Testing on sample products..."})
+            start_step("test_recipe")
             test_results = await recipe_module.test_recipe(req.job_id, current_recipe)
+            end_step("test_recipe")
             current_recipe = _load_json_artifact(job_path, "recipe.json")
 
             def check_quality(results):
@@ -864,6 +915,7 @@ async def auto_refine(req: JobIdRequest):
                     {"text": f"Some listings need work — improving the recipe (round {i + 2})..."},
                 )
 
+                start_step(f"refine_round_{i + 2}")
                 current_recipe = await recipe_module.refine_recipe(
                     req.job_id, current_recipe, feedback, test_results
                 )
@@ -882,6 +934,7 @@ async def auto_refine(req: JobIdRequest):
                 test_results = await recipe_module.test_recipe(
                     req.job_id, current_recipe
                 )
+                end_step(f"refine_round_{i + 2}")
                 current_recipe = _load_json_artifact(job_path, "recipe.json")
 
                 avg, all_passed = check_quality(test_results)
@@ -912,6 +965,10 @@ async def auto_refine(req: JobIdRequest):
                 else []
             )
 
+            # Project batch cost from samples
+            sample_count = len(test_results)
+            cost_estimate = estimate_batch_cost(sample_count, total_products)
+
             yield _sse_event(
                 "complete",
                 {
@@ -921,6 +978,7 @@ async def auto_refine(req: JobIdRequest):
                     "iterations": iterations,
                     "avg_score": avg,
                     "remaining_issues": remaining_issues,
+                    "cost_estimate": cost_estimate,
                 },
             )
 
@@ -1071,10 +1129,15 @@ async def execute(req: JobIdRequest):
 
 async def _run_batch(job_id: str, connections: set):
     """Wrapper around executor.execute_batch with error handling."""
+    from gemini_client import start_step, end_step
+    start_step("batch_execute")
     try:
         report = await executor.execute_batch(job_id, connections)
+        step_summary = end_step("batch_execute")
+        report["token_cost"] = step_summary
         logger.info("Batch complete for job %s: %s", job_id, report)
     except Exception as e:
+        end_step("batch_execute")
         logger.exception("Batch execution failed for job %s", job_id)
         # Notify connected clients of the failure
         try:

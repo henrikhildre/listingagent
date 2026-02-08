@@ -42,6 +42,149 @@ def _ensure_client():
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Token usage tracking
+# ---------------------------------------------------------------------------
+
+# Cost per 1M tokens (USD)
+INPUT_COST_PER_M = 0.50
+OUTPUT_COST_PER_M = 3.00
+
+_token_usage = {"input": 0, "output": 0, "calls": 0}
+_current_step: str | None = None
+_step_snapshot: dict | None = None  # snapshot of _token_usage at step start
+_step_history: list[dict] = []  # completed step summaries
+
+
+def _calc_cost(input_tokens: int, output_tokens: int) -> float:
+    """Calculate USD cost from token counts."""
+    return (input_tokens * INPUT_COST_PER_M + output_tokens * OUTPUT_COST_PER_M) / 1_000_000
+
+
+def _log_tokens(response, model_name: str, caller: str) -> None:
+    """Log token counts from a Gemini response and update running totals."""
+    meta = getattr(response, "usage_metadata", None)
+    if meta is None:
+        return
+    inp = getattr(meta, "prompt_token_count", 0) or 0
+    out = getattr(meta, "candidates_token_count", 0) or 0
+    _token_usage["input"] += inp
+    _token_usage["output"] += out
+    _token_usage["calls"] += 1
+    cost = _calc_cost(inp, out)
+    logger.info(
+        "TOKENS [%s] %s: in=%d out=%d ($%.4f) | cumulative: in=%d out=%d, calls=%d ($%.4f)",
+        model_name, caller, inp, out, cost,
+        _token_usage["input"], _token_usage["output"], _token_usage["calls"],
+        _calc_cost(_token_usage["input"], _token_usage["output"]),
+    )
+
+
+def start_step(name: str) -> None:
+    """Mark the beginning of a workflow step for token tracking."""
+    global _current_step, _step_snapshot
+    _current_step = name
+    _step_snapshot = {
+        "input": _token_usage["input"],
+        "output": _token_usage["output"],
+        "calls": _token_usage["calls"],
+    }
+    logger.info("COST STEP [%s] started", name)
+
+
+def end_step(name: str | None = None) -> dict:
+    """Mark the end of a workflow step. Logs summary with cost. Returns step stats."""
+    global _current_step, _step_snapshot
+    step_name = name or _current_step or "unknown"
+
+    if _step_snapshot is None:
+        # No matching start_step — compute from zero
+        snap_in, snap_out, snap_calls = 0, 0, 0
+    else:
+        snap_in = _step_snapshot["input"]
+        snap_out = _step_snapshot["output"]
+        snap_calls = _step_snapshot["calls"]
+
+    step_in = _token_usage["input"] - snap_in
+    step_out = _token_usage["output"] - snap_out
+    step_calls = _token_usage["calls"] - snap_calls
+    step_cost = _calc_cost(step_in, step_out)
+    total_cost = _calc_cost(_token_usage["input"], _token_usage["output"])
+
+    summary = {
+        "step": step_name,
+        "input": step_in,
+        "output": step_out,
+        "calls": step_calls,
+        "cost": round(step_cost, 4),
+    }
+    _step_history.append(summary)
+
+    logger.info(
+        "COST STEP [%s] complete: %d calls, in=%d out=%d, step=$%.4f | total so far=$%.4f",
+        step_name, step_calls, step_in, step_out, step_cost, total_cost,
+    )
+
+    _current_step = None
+    _step_snapshot = None
+    return summary
+
+
+def estimate_batch_cost(sample_count: int, total_count: int) -> dict:
+    """Estimate full batch cost based on sample token usage.
+
+    Call this after a recipe test step to project what the full batch will cost.
+    Uses the token usage from the current/last step as the sample baseline.
+    """
+    if not _step_history:
+        return {}
+    last = _step_history[-1]
+    if sample_count <= 0:
+        return {}
+
+    per_product_in = last["input"] / sample_count
+    per_product_out = last["output"] / sample_count
+    est_in = int(per_product_in * total_count)
+    est_out = int(per_product_out * total_count)
+    est_cost = _calc_cost(est_in, est_out)
+    already_spent = _calc_cost(_token_usage["input"], _token_usage["output"])
+
+    estimate = {
+        "sample_count": sample_count,
+        "total_count": total_count,
+        "per_product_input": int(per_product_in),
+        "per_product_output": int(per_product_out),
+        "estimated_batch_input": est_in,
+        "estimated_batch_output": est_out,
+        "estimated_batch_cost": round(est_cost, 4),
+        "already_spent": round(already_spent, 4),
+        "estimated_total": round(est_cost + already_spent, 4),
+    }
+    logger.info(
+        "COST ESTIMATE: %d products × ~%d in + ~%d out per product = $%.4f batch + $%.4f spent = $%.4f total",
+        total_count, int(per_product_in), int(per_product_out),
+        est_cost, already_spent, est_cost + already_spent,
+    )
+    return estimate
+
+
+def get_token_usage() -> dict:
+    """Return cumulative token usage stats with cost breakdown."""
+    total_cost = _calc_cost(_token_usage["input"], _token_usage["output"])
+    return {
+        **_token_usage,
+        "cost": round(total_cost, 4),
+        "steps": list(_step_history),
+    }
+
+
+def reset_token_usage() -> None:
+    """Reset cumulative token counters and step history."""
+    _token_usage["input"] = 0
+    _token_usage["output"] = 0
+    _token_usage["calls"] = 0
+    _step_history.clear()
+
 
 def extract_python_code(text: str) -> str | None:
     """Extract the last Python code block from markdown-formatted LLM response."""
@@ -150,6 +293,7 @@ async def generate_with_text(
     response = await _ensure_client().aio.models.generate_content(
         model=model_name, contents=prompt, config=config
     )
+    _log_tokens(response, model_name, "generate_with_text")
 
     return response.text or ""
 
@@ -190,6 +334,7 @@ async def generate_with_images(
     response = await _ensure_client().aio.models.generate_content(
         model=model_name, contents=parts, config=config
     )
+    _log_tokens(response, model_name, "generate_with_images")
 
     return response.text or ""
 
@@ -233,6 +378,7 @@ async def generate_with_code_execution(
     response = await _ensure_client().aio.models.generate_content(
         model=model_name, contents=parts, config=config
     )
+    _log_tokens(response, model_name, "generate_with_code_execution")
 
     return response.text or ""
 
@@ -276,6 +422,7 @@ async def generate_with_search(
     response = await _ensure_client().aio.models.generate_content(
         model=model_name, contents=parts, config=config
     )
+    _log_tokens(response, model_name, "generate_with_search")
 
     return response.text or ""
 
@@ -321,5 +468,6 @@ async def generate_structured(
     response = await _ensure_client().aio.models.generate_content(
         model=model_name, contents=parts, config=config
     )
+    _log_tokens(response, model_name, "generate_structured")
 
     return json.loads(response.text) if response.text else {}

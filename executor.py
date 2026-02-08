@@ -233,14 +233,14 @@ async def _process_product(
                 + "\n\nRespond with ONLY valid JSON matching the listing schema.",
                 image_parts=image_parts,
                 model=BATCH_MODEL,
-                thinking_level="high",
+                thinking_level="low",
             )
         else:
             raw_text = await generate_with_text(
                 prompt=retry_prompt
                 + "\n\nRespond with ONLY valid JSON matching the listing schema.",
                 model=BATCH_MODEL,
-                thinking_level="high",
+                thinking_level="low",
             )
 
         listing = parse_json_from_response(raw_text)
