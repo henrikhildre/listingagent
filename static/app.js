@@ -786,18 +786,18 @@ function addPhaseBanner(phase) {
     const banners = {
         DISCOVER: {
             step: '1',
-            title: 'Data Mapping',
-            description: 'The AI is analyzing your files to understand what products you have and how images connect to data.',
+            title: 'Understand Your Products',
+            description: 'The AI is reading your files to learn what products you have and match images to listings.',
         },
         INTERVIEW: {
             step: '2',
-            title: 'Brand Profile',
-            description: 'Answer a few questions about your selling style so listings match your brand voice.',
+            title: 'Define Your Brand',
+            description: 'Tell me about your selling style — tone, pricing, key details — so listings sound like you.',
         },
         RECIPE_TEST: {
             step: '3',
-            title: 'Listing Template',
-            description: 'The AI will draft a listing formula and test it on a few products. Review and refine until you\'re happy.',
+            title: 'Build Your Listing Recipe',
+            description: 'I\'ll create an AI-powered recipe using Gemini to generate listings, test it on a few products, and refine until it\'s right.',
         },
     };
 
@@ -1193,8 +1193,10 @@ async function startRecipeBuilding() {
     updatePhaseIndicator('RECIPE_TEST');
     addPhaseBanner('RECIPE_TEST');
 
+    addMessage('assistant', "Now I'll create a recipe — a set of AI instructions that Gemini will follow to generate each listing. I'll test it on a few of your products and automatically improve it until the quality is high.");
+
     setChatInputEnabled(false);
-    const progress = showInlineProgress('Drafting listing template...');
+    const progress = showInlineProgress('Drafting listing recipe...');
 
     try {
         const response = await fetch('/api/auto-refine', {
@@ -1213,9 +1215,9 @@ async function startRecipeBuilding() {
                 updateInlineProgress(progress, event.data.text);
             } else if (event.type === 'score') {
                 const { attempt, avg, all_passed } = event.data;
-                const status = all_passed ? 'All passed' : 'Some issues remain';
+                const status = all_passed ? 'Looking good!' : 'Still refining...';
                 updateInlineProgress(progress,
-                    `Attempt ${attempt}: avg ${avg}/100 — ${status}`);
+                    `Round ${attempt}: scored ${avg}/100 — ${status}`);
             } else if (event.type === 'complete') {
                 removeInlineProgress(progress);
                 handleAutoRefineComplete(event.data);
@@ -1247,10 +1249,10 @@ function handleAutoRefineComplete(data) {
     const iterLabel = `${iters} round${iters > 1 ? 's' : ''}`;
 
     if (data.reached_threshold) {
-        const footer = `<p style="margin-top:0.75rem">The recipe reached <strong>${data.avg_score}/100</strong> average after ${iterLabel}. Looking good!</p>`;
+        const footer = `<p style="margin-top:0.75rem">The recipe scored <strong>${data.avg_score}/100</strong> after ${iterLabel} of testing. The listings look great!</p>`;
         addMessage('assistant', (summary.html ? summary.content : '') + footer, { html: true });
     } else {
-        const footer = `<p style="margin-top:0.75rem">After ${iterLabel} of refinement the recipe is at <strong>${data.avg_score}/100</strong> average. You can give specific guidance to improve, or approve as-is.</p>`;
+        const footer = `<p style="margin-top:0.75rem">After ${iterLabel} the recipe is at <strong>${data.avg_score}/100</strong>. Some issues remain (listed above). You can give me specific feedback to improve, or approve as-is.</p>`;
         addMessage('assistant', (summary.html ? summary.content : '') + footer, { html: true });
     }
 
@@ -1343,10 +1345,7 @@ function buildRecipeTestSummary(testResults) {
         card += `<div class="test-result-title">${title}</div>`;
 
         if (description) {
-            const preview = description.length > 250
-                ? escapeHtml(description.slice(0, 250)) + '&hellip;'
-                : escapeHtml(description);
-            card += `<div class="test-result-description">${preview}</div>`;
+            card += `<div class="test-result-description">${escapeHtml(description)}</div>`;
         }
 
         card += tagPillsHtml(tr.listing?.tags, 'chat');
@@ -1363,7 +1362,7 @@ function buildRecipeTestSummary(testResults) {
 
     const avgScore = Math.round(testResults.reduce((sum, tr) => sum + (tr.validation?.score || 0), 0) / testResults.length);
     cards += `<div class="test-result-avg">Average score: <strong>${avgScore}/100</strong></div>`;
-    cards += `<p style="margin-top:0.5rem;color:var(--color-text-secondary);font-size:0.85rem">Review the full results in the right panel. You can approve the recipe or give me feedback to refine it.</p>`;
+    cards += `<p style="margin-top:0.5rem;color:var(--color-text-secondary);font-size:0.85rem">You can approve the recipe or tell me what to change.</p>`;
 
     return { html: true, content: cards };
 }
