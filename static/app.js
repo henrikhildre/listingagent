@@ -1748,7 +1748,7 @@ function resetExecutionView() {
 
     // Reset stats
     const statsContainer = document.getElementById('execution-stats');
-    if (statsContainer) statsContainer.classList.add('hidden');
+    if (statsContainer) statsContainer.innerHTML = '';
 
     // Hide download buttons
     const downloadSection = document.getElementById('download-section');
@@ -1869,6 +1869,12 @@ function handleProgress(data) {
     if (status !== 'retrying') {
         state.batchResults.push(data);
     }
+
+    // Update live stats
+    const succeeded = state.batchResults.filter(r => !r.failed && r.status !== 'failed').length;
+    const failed = state.batchResults.filter(r => r.failed || r.status === 'failed').length;
+    const retried = state.batchResults.filter(r => r.retried || r.status === 'retried').length;
+    showExecutionStats({ succeeded, failed, retried });
 }
 
 /**
@@ -1928,35 +1934,32 @@ async function loadListingsData() {
 }
 
 /**
- * Display execution statistics.
+ * Display execution statistics (live during progress & final report).
  */
 function showExecutionStats(report) {
     const container = document.getElementById('execution-stats');
     if (!container || !report) return;
 
-    container.classList.remove('hidden');
+    const elapsed = report.elapsed_seconds
+        ? `<div class="mt-3 text-sm text-slate-500 text-center">Completed in ${report.elapsed_seconds}s</div>`
+        : '';
+
     container.innerHTML = `
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div class="bg-white rounded-lg border border-slate-200 p-4 text-center">
-                <div class="text-2xl font-bold text-slate-800">${report.total}</div>
-                <div class="text-sm text-slate-500">Total</div>
+        <div class="grid grid-cols-3 gap-4">
+            <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Succeeded</p>
+                <p class="text-2xl font-bold text-green-600">${report.succeeded}</p>
             </div>
-            <div class="bg-white rounded-lg border border-slate-200 p-4 text-center">
-                <div class="text-2xl font-bold text-green-600">${report.succeeded}</div>
-                <div class="text-sm text-slate-500">Succeeded</div>
+            <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Failed</p>
+                <p class="text-2xl font-bold text-red-500">${report.failed}</p>
             </div>
-            <div class="bg-white rounded-lg border border-slate-200 p-4 text-center">
-                <div class="text-2xl font-bold text-red-500">${report.failed}</div>
-                <div class="text-sm text-slate-500">Failed</div>
-            </div>
-            <div class="bg-white rounded-lg border border-slate-200 p-4 text-center">
-                <div class="text-2xl font-bold text-blue-500">${report.retried}</div>
-                <div class="text-sm text-slate-500">Retried</div>
+            <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Retried</p>
+                <p class="text-2xl font-bold text-amber-500">${report.retried}</p>
             </div>
         </div>
-        <div class="mt-3 text-sm text-slate-500 text-center">
-            Completed in ${report.elapsed_seconds}s
-        </div>
+        ${elapsed}
     `;
 }
 
