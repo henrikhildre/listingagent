@@ -90,17 +90,52 @@
         </header>
 
         <!-- Upload Content -->
-        <main class="flex-1 flex items-center justify-center px-6 py-12">
-            <div class="max-w-xl w-full">
+        <main class="flex-1 overflow-y-auto px-6 py-10">
+            <div class="max-w-2xl w-full mx-auto">
 
-                <!-- Heading -->
-                <div class="text-center mb-10">
-                    <h2 class="text-3xl font-bold text-slate-900 mb-3">Add your products</h2>
-                    <p class="text-slate-500 text-base leading-relaxed">
-                        Upload files, paste product data, or drop in images. We'll figure out the structure and create marketplace listings at scale.
+                <!-- Hero -->
+                <div class="text-center mb-6">
+                    <h2 class="text-3xl font-bold text-slate-900 mb-3">Create marketplace listings with AI</h2>
+                    <p class="text-slate-500 text-base leading-relaxed max-w-lg mx-auto">
+                        Upload your product data and images. The AI learns your brand voice, builds a listing template, and generates polished listings for every product — ready for Etsy, eBay, Shopify, or anywhere you sell.
                     </p>
                 </div>
 
+                <!-- How it works -->
+                <div class="flex items-start justify-center gap-3 mb-10 px-2">
+                    <div class="flex-1 max-w-[9rem] text-center">
+                        <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-2 text-xs font-bold">1</div>
+                        <p class="text-xs font-semibold text-slate-700 leading-tight">Upload data</p>
+                        <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Spreadsheets, images, text — any format</p>
+                    </div>
+                    <svg class="w-4 h-4 text-slate-300 mt-2 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+                    <div class="flex-1 max-w-[9rem] text-center">
+                        <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-2 text-xs font-bold">2</div>
+                        <p class="text-xs font-semibold text-slate-700 leading-tight">Define your brand</p>
+                        <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Quick interview to capture your style</p>
+                    </div>
+                    <svg class="w-4 h-4 text-slate-300 mt-2 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+                    <div class="flex-1 max-w-[9rem] text-center">
+                        <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-2 text-xs font-bold">3</div>
+                        <p class="text-xs font-semibold text-slate-700 leading-tight">Test & refine</p>
+                        <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">AI drafts samples, you give feedback</p>
+                    </div>
+                    <svg class="w-4 h-4 text-slate-300 mt-2 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+                    <div class="flex-1 max-w-[9rem] text-center">
+                        <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-2 text-xs font-bold">4</div>
+                        <p class="text-xs font-semibold text-slate-700 leading-tight">Batch generate</p>
+                        <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Export all listings in one click</p>
+                    </div>
+                </div>
+
+                <!-- Section divider -->
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="flex-1 h-px bg-slate-200"></div>
+                    <span class="text-xs text-slate-400 font-medium">Get started</span>
+                    <div class="flex-1 h-px bg-slate-200"></div>
+                </div>
+
+              <div class="max-w-xl mx-auto">
                 <!-- Input Mode Tabs -->
                 <div class="flex rounded-xl bg-slate-100 p-1 mb-6" id="input-mode-tabs">
                     <button id="tab-upload" class="input-tab input-tab-active flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2" onclick="switchInputMode('upload')">
@@ -190,6 +225,7 @@
                     Try with sample data
                 </button>
 
+              </div><!-- /max-w-xl inner -->
             </div>
         </main>
     </div>
