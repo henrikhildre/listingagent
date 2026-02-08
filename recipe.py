@@ -1026,8 +1026,12 @@ def _basic_validation(listing: dict, style_profile: dict) -> dict:
     if len(tags) < 3:
         issues.append(f"Too few tags ({len(tags)})")
 
-    price = listing.get("suggested_price", 0)
-    if not isinstance(price, (int, float)) or price <= 0:
+    raw_price = listing.get("suggested_price", 0)
+    try:
+        price = float(_re.sub(r"[^\d.]", "", str(raw_price)))
+    except (ValueError, TypeError):
+        price = 0
+    if price <= 0:
         issues.append("Invalid or missing price")
 
     score = max(0, 100 - (len(issues) * 15))
