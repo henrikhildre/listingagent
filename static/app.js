@@ -2570,10 +2570,7 @@ function downloadFormat(format) {
     document.body.removeChild(link);
 
     const labels = {
-        etsy: 'Etsy CSV',
-        ebay: 'eBay CSV',
-        shopify: 'Shopify CSV',
-        csv: 'Full CSV',
+        csv: 'CSV',
         text: 'Copy-Paste Text',
     };
     showToast(`Downloading ${labels[format] || format}...`, 'success');

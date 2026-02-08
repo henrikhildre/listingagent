@@ -1221,13 +1221,10 @@ async def download(job_id: str):
 
 
 # ---------------------------------------------------------------------------
-# 9b. GET /api/download/{job_id}/{format}  — platform-specific exports
+# 9b. GET /api/download/{job_id}/{format}  — export formats
 # ---------------------------------------------------------------------------
 
 _EXPORT_FORMATS = {
-    "etsy": ("etsy_upload.csv", "text/csv", "etsy_upload.csv"),
-    "ebay": ("ebay_upload.csv", "text/csv", "ebay_upload.csv"),
-    "shopify": ("shopify_upload.csv", "text/csv", "shopify_upload.csv"),
     "csv": ("summary.csv", "text/csv", "summary.csv"),
     "text": ("listings_copy_paste.txt", "text/plain", "listings.txt"),
 }
@@ -1235,7 +1232,7 @@ _EXPORT_FORMATS = {
 
 @app.get("/api/download/{job_id}/{export_format}")
 async def download_format(job_id: str, export_format: str):
-    """Download a platform-specific export file."""
+    """Download an export file in the requested format."""
     job_path = _job_exists(job_id)
 
     fmt = _EXPORT_FORMATS.get(export_format)
@@ -1252,16 +1249,8 @@ async def download_format(job_id: str, export_format: str):
     if not file_path.exists():
         # Try to generate on-the-fly if it doesn't exist
         try:
-            from executor import (
-                generate_etsy_csv,
-                generate_ebay_csv,
-                generate_shopify_csv,
-                generate_copy_paste_text,
-            )
+            from executor import generate_copy_paste_text
             generators = {
-                "etsy": generate_etsy_csv,
-                "ebay": generate_ebay_csv,
-                "shopify": generate_shopify_csv,
                 "text": generate_copy_paste_text,
             }
             gen = generators.get(export_format)

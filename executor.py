@@ -15,7 +15,7 @@ For each product the module:
 7. Streams progress to connected WebSocket clients.
 
 After the full batch:
-- Generates summary.csv
+- Generates summary.csv and copy-paste text
 - Generates batch report (report.json)
 - Creates downloadable ZIP via file_utils
 """
@@ -432,14 +432,11 @@ async def execute_batch(job_id: str, websocket_connections: set) -> dict:
     await generate_summary_csv(job_id, results)
     report = generate_batch_report(job_id, results, elapsed_seconds=elapsed)
 
-    # Generate platform-specific exports
+    # Generate export files
     try:
-        generate_etsy_csv(job_id)
-        generate_ebay_csv(job_id)
-        generate_shopify_csv(job_id)
         generate_copy_paste_text(job_id)
     except Exception as e:
-        logger.warning("Platform export generation failed (non-fatal): %s", e)
+        logger.warning("Export generation failed (non-fatal): %s", e)
 
     # Package into ZIP
     create_output_zip(job_id)
@@ -581,7 +578,7 @@ async def generate_summary_csv(job_id: str, results: list[dict]) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Platform-specific CSV exports
+# Text export + helpers
 # ---------------------------------------------------------------------------
 
 
@@ -599,188 +596,6 @@ def _get_results_from_disk(job_id: str) -> list[dict]:
         except Exception as e:
             logger.warning("Failed to load listing %s: %s", p, e)
     return results
-
-
-def generate_etsy_csv(job_id: str) -> Path:
-    """
-    Generate an Etsy-compatible bulk upload CSV.
-
-    Maps listing fields to Etsy's expected column headers.
-    """
-    results = _get_results_from_disk(job_id)
-    job_path = get_job_path(job_id)
-    csv_path = job_path / "output" / "etsy_upload.csv"
-
-    fieldnames = [
-        "Title",
-        "Description",
-        "Price",
-        "Tags",
-        "Materials",
-        "Image",
-        "Category",
-        "SKU",
-        "Who Made",
-        "When Made",
-        "Taxonomy",
-    ]
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for result in results:
-            listing = result.get("listing") or {}
-            if not listing:
-                continue
-            tags = listing.get("tags", [])
-            specifics = _normalize_specifics(listing.get("item_specifics"))
-            materials = specifics.get("Material", specifics.get("Materials", ""))
-
-            writer.writerow({
-                "Title": (listing.get("title", "") or "")[:140],
-                "Description": listing.get("description", ""),
-                "Price": listing.get("suggested_price", ""),
-                "Tags": ",".join(tags[:13]),
-                "Materials": materials,
-                "Image": result.get("image_filename") or "",
-                "Category": listing.get("category_suggestion", ""),
-                "SKU": result.get("sku") or "",
-                "Who Made": "someone_else",
-                "When Made": specifics.get("Era", specifics.get("When Made", "")),
-                "Taxonomy": listing.get("category_suggestion", ""),
-            })
-
-    logger.info("Etsy CSV written to %s", csv_path)
-    return csv_path
-
-
-def generate_ebay_csv(job_id: str) -> Path:
-    """
-    Generate an eBay-compatible bulk upload CSV.
-
-    Maps listing fields to eBay's File Exchange / Seller Hub format.
-    """
-    results = _get_results_from_disk(job_id)
-    job_path = get_job_path(job_id)
-    csv_path = job_path / "output" / "ebay_upload.csv"
-
-    fieldnames = [
-        "Title",
-        "Description",
-        "StartPrice",
-        "BuyItNowPrice",
-        "Category",
-        "ConditionDescription",
-        "PicURL",
-        "CustomLabel",
-        "Brand",
-        "Color",
-        "Material",
-        "Style",
-        "Era",
-        "Tags",
-    ]
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for result in results:
-            listing = result.get("listing") or {}
-            if not listing:
-                continue
-            specifics = _normalize_specifics(listing.get("item_specifics"))
-            price = listing.get("suggested_price", "")
-            tags = listing.get("tags", [])
-
-            writer.writerow({
-                "Title": (listing.get("title", "") or "")[:80],
-                "Description": listing.get("description", ""),
-                "StartPrice": price,
-                "BuyItNowPrice": price,
-                "Category": listing.get("category_suggestion", ""),
-                "ConditionDescription": listing.get("condition_description", ""),
-                "PicURL": result.get("image_filename") or "",
-                "CustomLabel": result.get("sku") or "",
-                "Brand": specifics.get("Brand", ""),
-                "Color": specifics.get("Color", ""),
-                "Material": specifics.get("Material", ""),
-                "Style": specifics.get("Style", ""),
-                "Era": specifics.get("Era", ""),
-                "Tags": ",".join(tags[:13]),
-            })
-
-    logger.info("eBay CSV written to %s", csv_path)
-    return csv_path
-
-
-def generate_shopify_csv(job_id: str) -> Path:
-    """
-    Generate a Shopify-compatible product import CSV.
-
-    Maps listing fields to Shopify's standard import columns.
-    """
-    results = _get_results_from_disk(job_id)
-    job_path = get_job_path(job_id)
-    csv_path = job_path / "output" / "shopify_upload.csv"
-
-    fieldnames = [
-        "Handle",
-        "Title",
-        "Body (HTML)",
-        "Vendor",
-        "Product Category",
-        "Type",
-        "Tags",
-        "Published",
-        "Variant SKU",
-        "Variant Price",
-        "Image Src",
-        "SEO Title",
-        "SEO Description",
-    ]
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for result in results:
-            listing = result.get("listing") or {}
-            if not listing:
-                continue
-            tags = listing.get("tags", [])
-            title = listing.get("title", "")
-            # Generate a URL-safe handle from the title
-            handle = (
-                title.lower()
-                .replace(" ", "-")
-                .replace("'", "")
-                .replace('"', "")[:100]
-            )
-            # Wrap description in basic HTML paragraphs
-            desc = listing.get("description", "")
-            body_html = "<p>" + desc.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
-            seo_desc = desc[:320] if desc else ""
-
-            writer.writerow({
-                "Handle": handle,
-                "Title": title,
-                "Body (HTML)": body_html,
-                "Vendor": "",
-                "Product Category": listing.get("category_suggestion", ""),
-                "Type": listing.get("category_suggestion", ""),
-                "Tags": ", ".join(tags),
-                "Published": "TRUE",
-                "Variant SKU": result.get("sku") or "",
-                "Variant Price": listing.get("suggested_price", ""),
-                "Image Src": result.get("image_filename") or "",
-                "SEO Title": title[:70],
-                "SEO Description": seo_desc,
-            })
-
-    logger.info("Shopify CSV written to %s", csv_path)
-    return csv_path
 
 
 def generate_copy_paste_text(job_id: str) -> Path:

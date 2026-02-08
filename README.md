@@ -24,7 +24,7 @@ The hybrid evaluation combines:
 The recipe auto-refines in a loop, streaming progress via SSE, until quality targets are met or you approve as-is.
 
 ### 4. Batch Execution
-The approved recipe runs across all products — 5 at a time in parallel. Each listing gets validated automatically; failures retry with escalated reasoning. Progress streams in real time over WebSocket. Download results as a ZIP containing individual JSONs, a summary CSV, and a batch report.
+The approved recipe runs across all products — 5 at a time in parallel. Each listing gets validated automatically; failures retry with escalated reasoning. Progress streams in real time over WebSocket. Download results as a ZIP containing individual JSONs, a summary CSV, a copy-paste text file, and a batch report.
 
 The system fingerprints your data structure, so next time you upload a batch with the same columns you skip straight to execution.
 
