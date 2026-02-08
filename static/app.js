@@ -1916,38 +1916,40 @@ function renderFieldBar(field, completeness, stats) {
 function formatStyleProfileCard(profile) {
     if (!profile) return '<p>No profile data available.</p>';
 
-    const pill = (text) => `<span style="display:inline-block;background:#EEF2FF;color:#4F46E5;font-size:12px;padding:2px 10px;border-radius:999px;margin:2px 3px 2px 0">${escapeHtml(text)}</span>`;
+    const pill = (text) => `<span style="display:inline-block;background:#EEF2FF;color:#4F46E5;font-size:12px;padding:2px 10px;border-radius:999px;margin:2px 3px 2px 0">${escapeHtml(String(text))}</span>`;
 
-    const row = (label, value) => {
-        if (!value) return '';
-        return `<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #F1F5F9">
-            <span style="color:#64748B;font-size:13px;min-width:120px;flex-shrink:0">${escapeHtml(label)}</span>
-            <span style="color:#1E293B;font-size:13px">${escapeHtml(value)}</span>
-        </div>`;
-    };
+    const formatLabel = (key) => key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-    const mentions = (profile.always_mention || []).map(m => pill(m)).join('');
-    const examples = (profile.example_listings || []).map(e => `<div style="font-size:12px;color:#64748B;padding:2px 0">${escapeHtml(e)}</div>`).join('');
+    // Build a title from platform + seller_type if available
+    const titleParts = [profile.platform, profile.seller_type].filter(Boolean);
+    const title = titleParts.length ? titleParts.map(s => escapeHtml(s)).join(' \u00b7 ') : 'Brand Profile';
+
+    // Render all fields dynamically
+    let rowsHtml = '';
+    for (const [key, value] of Object.entries(profile)) {
+        if (value === null || value === undefined || value === '') continue;
+        if (key === 'platform' || key === 'seller_type') continue; // already in title
+
+        if (Array.isArray(value)) {
+            const items = value.filter(v => v !== null && v !== '');
+            if (!items.length) continue;
+            rowsHtml += `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9">
+                <span style="color:#64748B;font-size:13px;display:block;margin-bottom:4px">${escapeHtml(formatLabel(key))}</span>
+                <div>${items.map(v => pill(v)).join('')}</div>
+            </div>`;
+        } else {
+            rowsHtml += `<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #F1F5F9">
+                <span style="color:#64748B;font-size:13px;min-width:120px;flex-shrink:0">${escapeHtml(formatLabel(key))}</span>
+                <span style="color:#1E293B;font-size:13px">${escapeHtml(String(value))}</span>
+            </div>`;
+        }
+    }
 
     return `
         <p style="margin-bottom:12px">Here's your brand profile. Review it and click <strong>Confirm Brand Profile</strong> to proceed, or tell me what to adjust.</p>
         <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:16px;margin-top:4px">
-            <div style="font-weight:600;font-size:15px;color:#1E293B;margin-bottom:12px">${escapeHtml(profile.platform || 'General')} \u00b7 ${escapeHtml(profile.seller_type || 'Seller')}</div>
-            ${row('Target buyer', profile.target_buyer)}
-            ${row('Brand voice', profile.brand_voice)}
-            ${row('Descriptions', profile.description_structure)}
-            ${row('Length', profile.avg_description_length)}
-            ${row('Pricing', profile.pricing_strategy)}
-            ${row('Tags style', profile.tags_style)}
-            ${row('Title format', profile.title_format)}
-            ${mentions ? `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9">
-                <span style="color:#64748B;font-size:13px;display:block;margin-bottom:4px">Always mention</span>
-                <div>${mentions}</div>
-            </div>` : ''}
-            ${examples ? `<div style="padding:8px 0">
-                <span style="color:#64748B;font-size:13px;display:block;margin-bottom:4px">Example listings</span>
-                ${examples}
-            </div>` : ''}
+            <div style="font-weight:600;font-size:15px;color:#1E293B;margin-bottom:12px">${title}</div>
+            ${rowsHtml}
         </div>
     `;
 }
