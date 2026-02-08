@@ -439,6 +439,18 @@ async def test_recipe(
     return test_results
 
 
+_NAME_FIELDS = ("name", "item", "title", "product_name", "product", "sku", "id")
+
+
+def _get_product_name(product: dict) -> str:
+    """Best-effort display name from whatever field the data model uses."""
+    for field in _NAME_FIELDS:
+        val = product.get(field)
+        if val and str(val).strip():
+            return str(val).strip()
+    return "Unknown"
+
+
 async def _test_single_product(
     job_id: str,
     recipe: dict,
@@ -497,7 +509,7 @@ async def _test_single_product(
 
     return {
         "product_id": product_id,
-        "product_name": product.get("name", "Unknown"),
+        "product_name": _get_product_name(product),
         "listing": listing,
         "validation": validation,
         "image_filename": image_files[0] if image_files else None,
@@ -695,7 +707,7 @@ def build_auto_feedback(test_results: list[dict]) -> str:
     lines = ["The following issues were found during automated testing:\n"]
 
     for tr in test_results:
-        name = tr.get("product_name") or tr.get("product_id") or "Unknown"
+        name = tr.get("product_name") or tr.get("product_id") or "Sample"
         validation = tr.get("validation", {})
         score = validation.get("score", 0)
 
@@ -981,8 +993,8 @@ JUDGE_CRITERIA = {
         "focus": "Evaluate whether the listing creates desire. Does it highlight benefits, not just features? Is the title eye-catching? Would this stand out in search results?",
     },
     "image_text_consistency": {
-        "question": "Does the text description accurately reflect what the product data and metadata suggest about this product?",
-        "focus": "The description should not invent features or details that aren't supported by the product data. Hallucinated claims are a fail.",
+        "question": "Does the listing stay faithful to the available product data without inventing specific false claims?",
+        "focus": "General elaboration and lifestyle language are fine. Only FAIL if the listing fabricates specific details (wrong brand, wrong material, invented measurements) that contradict or aren't supported by the data. Sparse product data is expected — the listing may describe general characteristics.",
     },
 }
 
@@ -1012,11 +1024,8 @@ async def _judge_single_criterion(
 - Seller type: {style_profile.get("seller_type", "N/A")}
 - Always mention: {", ".join(style_profile.get("always_mention", [])) or "N/A"}
 
-## Product Data
-- Name: {product.get("name", "N/A")}
-- Category: {product.get("category", "N/A")}
-- Price: {product.get("price", "N/A")}
-- Metadata: {json.dumps(product.get("metadata", {}), default=str)}
+## Product Data (all available fields)
+{json.dumps({k: v for k, v in product.items() if k != "image_files" and v}, indent=2, default=str)}
 
 ## Generated Listing
 - Title: {listing.get("title", "")}

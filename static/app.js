@@ -1181,22 +1181,16 @@ function handleAutoRefineComplete(data) {
     state.testResults = data.test_results || [];
     updateContextPanel();
 
+    const summary = buildRecipeTestSummary(state.testResults);
+    const iters = data.iterations;
+    const iterLabel = `${iters} round${iters > 1 ? 's' : ''}`;
+
     if (data.reached_threshold) {
-        // Good enough — show results and approve button
-        const summary = buildRecipeTestSummary(state.testResults);
-        if (summary.html) {
-            addMessage('assistant', summary.content + `<p style="margin-top:0.75rem">The recipe reached <strong>${data.avg_score}/100</strong> average after ${data.iterations} iteration${data.iterations > 1 ? 's' : ''}. Looking good!</p>`, { html: true });
-        } else {
-            addMessage('assistant', (summary.content || summary) + `\n\nThe recipe reached **${data.avg_score}/100** average after ${data.iterations} iteration${data.iterations > 1 ? 's' : ''}. Looking good!`);
-        }
+        const footer = `<p style="margin-top:0.75rem">The recipe reached <strong>${data.avg_score}/100</strong> average after ${iterLabel}. Looking good!</p>`;
+        addMessage('assistant', (summary.html ? summary.content : '') + footer, { html: true });
     } else {
-        // Stuck — show remaining issues, ask for user guidance
-        let issueText = `After ${data.iterations} auto-refinement attempt${data.iterations > 1 ? 's' : ''}, the recipe is at **${data.avg_score}/100** average. Some issues remain:\n\n`;
-        for (const item of (data.remaining_issues || [])) {
-            issueText += `**${item.product}:** ${item.issues.join(', ')}\n`;
-        }
-        issueText += '\nYou can give me specific guidance to improve, or approve the recipe as-is.';
-        addMessage('assistant', issueText);
+        const footer = `<p style="margin-top:0.75rem">After ${iterLabel} of refinement the recipe is at <strong>${data.avg_score}/100</strong> average. You can give specific guidance to improve, or approve as-is.</p>`;
+        addMessage('assistant', (summary.html ? summary.content : '') + footer, { html: true });
     }
 
     state.conversationHistory.push({

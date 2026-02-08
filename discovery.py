@@ -1303,7 +1303,7 @@ def get_safe_builtins(print_fn=print) -> dict:
         "len": len, "str": str, "int": int, "float": float,
         "bool": bool, "list": list, "dict": dict, "set": set,
         "tuple": tuple, "range": range, "enumerate": enumerate,
-        "zip": zip, "map": map, "filter": filter, "sorted": sorted,
+        "zip": zip, "map": map, "filter": filter, "sorted": sorted, "next": next, "iter": iter,
         "min": min, "max": max, "sum": sum, "abs": abs, "round": round,
         "any": any, "all": all, "isinstance": isinstance, "type": type,
         "hasattr": hasattr, "getattr": getattr,

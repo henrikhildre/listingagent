@@ -780,16 +780,25 @@ async def auto_refine(req: JobIdRequest):
 
                 feedback = recipe_module.build_auto_feedback(test_results)
                 yield _sse_event(
-                    "progress", {"text": f"Refining recipe — attempt {i + 2}..."}
+                    "progress",
+                    {"text": f"Analyzing test failures and optimizing recipe (round {i + 2})..."},
                 )
 
                 current_recipe = await recipe_module.refine_recipe(
                     req.job_id, current_recipe, feedback, test_results
                 )
 
-                yield _sse_event(
-                    "progress", {"text": f"Re-testing — attempt {i + 2}..."}
-                )
+                changes = current_recipe.get("changes_made", "")
+                if changes:
+                    yield _sse_event(
+                        "progress",
+                        {"text": f"Testing improved recipe — {changes[:80]}..."},
+                    )
+                else:
+                    yield _sse_event(
+                        "progress",
+                        {"text": f"Re-testing with updated prompt (round {i + 2})..."},
+                    )
                 test_results = await recipe_module.test_recipe(
                     req.job_id, current_recipe
                 )
