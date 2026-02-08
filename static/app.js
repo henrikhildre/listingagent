@@ -893,15 +893,20 @@ async function handleInterviewChat(message) {
         content: result.response,
     });
 
-    // Check if the profile is ready or backend says to start recipe
+    // Check if the profile is ready
     if (result.phase === 'profile_ready' || result.phase === 'start_recipe') {
         if (result.style_profile) {
             state.styleProfile = result.style_profile;
             updateContextPanel();
         }
 
-        addSystemMessage('Style profile complete. Building your listing recipe...');
-        await startRecipeBuilding();
+        // Show formatted profile card and confirm button
+        addMessage('assistant', formatStyleProfileCard(state.styleProfile), { html: true });
+        showActionButton('confirm-profile-btn', 'Confirm Brand Profile', async () => {
+            hideActionButton('confirm-profile-btn');
+            addSystemMessage('Brand profile confirmed. Building your listing recipe...');
+            await startRecipeBuilding();
+        });
     } else if (result.style_profile) {
         // Partial profile update
         state.styleProfile = result.style_profile;
@@ -1901,6 +1906,48 @@ function renderFieldBar(field, completeness, stats) {
                 <div class="${barColor} h-full rounded-full" style="width:${pct}%"></div>
             </div>
             <span class="text-xs text-slate-400 w-16 text-right">${detail || pct + '%'}</span>
+        </div>
+    `;
+}
+
+/**
+ * Format a style profile as a visual card for the chat.
+ */
+function formatStyleProfileCard(profile) {
+    if (!profile) return '<p>No profile data available.</p>';
+
+    const pill = (text) => `<span style="display:inline-block;background:#EEF2FF;color:#4F46E5;font-size:12px;padding:2px 10px;border-radius:999px;margin:2px 3px 2px 0">${escapeHtml(text)}</span>`;
+
+    const row = (label, value) => {
+        if (!value) return '';
+        return `<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #F1F5F9">
+            <span style="color:#64748B;font-size:13px;min-width:120px;flex-shrink:0">${escapeHtml(label)}</span>
+            <span style="color:#1E293B;font-size:13px">${escapeHtml(value)}</span>
+        </div>`;
+    };
+
+    const mentions = (profile.always_mention || []).map(m => pill(m)).join('');
+    const examples = (profile.example_listings || []).map(e => `<div style="font-size:12px;color:#64748B;padding:2px 0">${escapeHtml(e)}</div>`).join('');
+
+    return `
+        <p style="margin-bottom:12px">Here's your brand profile. Review it and click <strong>Confirm Brand Profile</strong> to proceed, or tell me what to adjust.</p>
+        <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:16px;margin-top:4px">
+            <div style="font-weight:600;font-size:15px;color:#1E293B;margin-bottom:12px">${escapeHtml(profile.platform || 'General')} \u00b7 ${escapeHtml(profile.seller_type || 'Seller')}</div>
+            ${row('Target buyer', profile.target_buyer)}
+            ${row('Brand voice', profile.brand_voice)}
+            ${row('Descriptions', profile.description_structure)}
+            ${row('Length', profile.avg_description_length)}
+            ${row('Pricing', profile.pricing_strategy)}
+            ${row('Tags style', profile.tags_style)}
+            ${row('Title format', profile.title_format)}
+            ${mentions ? `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9">
+                <span style="color:#64748B;font-size:13px;display:block;margin-bottom:4px">Always mention</span>
+                <div>${mentions}</div>
+            </div>` : ''}
+            ${examples ? `<div style="padding:8px 0">
+                <span style="color:#64748B;font-size:13px;display:block;margin-bottom:4px">Example listings</span>
+                ${examples}
+            </div>` : ''}
         </div>
     `;
 }
