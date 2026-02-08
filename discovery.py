@@ -1181,6 +1181,14 @@ def _execute_extraction_script(
 
     products = result.get("products", [])
 
+    # Replace NaN/Infinity with None (pandas can produce these,
+    # and they serialize as invalid JSON that browsers reject)
+    import math
+    for p in products:
+        for k, v in list(p.items()):
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                p[k] = None
+
     if not products:
         errors.append("Script produced 0 products")
     elif len(products) < expected_rows * 0.8:
@@ -1303,6 +1311,7 @@ def get_safe_builtins(print_fn=print) -> dict:
         "True": True, "False": False, "None": None,
         "ValueError": ValueError, "TypeError": TypeError,
         "KeyError": KeyError, "IndexError": IndexError,
+        "NameError": NameError, "AttributeError": AttributeError,
         "Exception": Exception,
         "repr": repr, "chr": chr, "ord": ord,
     }
