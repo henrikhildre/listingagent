@@ -582,21 +582,25 @@ async def discover(req: JobIdRequest):
     from gemini_client import start_step, end_step
     _job_exists(req.job_id)
 
-    start_step("discover")
-    try:
-        file_summary = await discovery.categorize_uploads(req.job_id)
-        analysis = await discovery.explore_data(req.job_id, file_summary)
-    except Exception as e:
-        logger.exception("Discovery failed for job %s", req.job_id)
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # Check if cached artifacts already exist in this job
+    # Check if cached artifacts already exist — skip expensive LLM call
     job_path = get_job_path(req.job_id)
     has_style_profile = (job_path / "style_profile.json").exists()
     has_approved_recipe = False
     recipe_data = _load_json_artifact(job_path, "recipe.json")
     if recipe_data and recipe_data.get("approved"):
         has_approved_recipe = True
+
+    start_step("discover")
+    try:
+        file_summary = await discovery.categorize_uploads(req.job_id)
+        if has_approved_recipe:
+            # Full-reuse cache: skip the LLM exploration call
+            analysis = "Using your saved pipeline — skipping data exploration."
+        else:
+            analysis = await discovery.explore_data(req.job_id, file_summary)
+    except Exception as e:
+        logger.exception("Discovery failed for job %s", req.job_id)
+        raise HTTPException(status_code=500, detail=str(e))
 
     end_step("discover")
 

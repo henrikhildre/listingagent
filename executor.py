@@ -28,12 +28,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from discovery import parse_json_from_response
 from file_utils import get_job_path, load_image_as_bytes, create_output_zip
 from gemini_client import (
     generate_structured,
-    generate_with_images,
-    generate_with_text,
     QuotaExhaustedError,
     BATCH_MODEL,
 )
@@ -189,9 +186,9 @@ async def _process_product(
             "failed": False,
         }
 
-    # --- Attempt 2: retry with higher thinking + feedback -----------------
+    # --- Attempt 2: retry with structured output + issue feedback ----------
     logger.info(
-        "Product %s failed validation (score=%d), retrying with higher thinking",
+        "Product %s failed validation (score=%d), retrying with issue feedback",
         product_id,
         validation.get("score", 0),
     )
@@ -224,26 +221,13 @@ async def _process_product(
     )
 
     try:
-        # Use generate_with_images / generate_with_text with higher thinking,
-        # then parse JSON manually (structured output not easily combined with
-        # higher-level reasoning model).
-        if image_parts:
-            raw_text = await generate_with_images(
-                prompt=retry_prompt
-                + "\n\nRespond with ONLY valid JSON matching the listing schema.",
-                image_parts=image_parts,
-                model=BATCH_MODEL,
-                thinking_level="low",
-            )
-        else:
-            raw_text = await generate_with_text(
-                prompt=retry_prompt
-                + "\n\nRespond with ONLY valid JSON matching the listing schema.",
-                model=BATCH_MODEL,
-                thinking_level="low",
-            )
-
-        listing = parse_json_from_response(raw_text)
+        listing = await generate_structured(
+            prompt=retry_prompt,
+            image_parts=image_parts if image_parts else None,
+            schema=output_schema,
+            model=BATCH_MODEL,
+            thinking_level="low",
+        )
     except QuotaExhaustedError:
         raise  # let batch handler deal with quota exhaustion
     except Exception as e:
