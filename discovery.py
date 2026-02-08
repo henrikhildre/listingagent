@@ -1076,8 +1076,26 @@ def _execute_extraction_script(
     import re as re_module
     import pandas as pd_module
 
+    # Map of allowed module names to their loaded objects
+    _allowed_modules = {
+        "pandas": pd_module, "pd": pd_module,
+        "io": io_module,
+        "json": json_module,
+        "re": re_module,
+        "math": math_module,
+    }
+
+    def _restricted_import(name, *_args, **_kwargs):
+        mod = _allowed_modules.get(name)
+        if mod is None:
+            raise ImportError(f"Import of '{name}' is not allowed")
+        return mod
+
+    builtins = _extraction_safe_builtins()
+    builtins["__import__"] = _restricted_import
+
     sandbox_globals = {
-        "__builtins__": _extraction_safe_builtins(),
+        "__builtins__": builtins,
         "pd": pd_module,
         "io": io_module,
         "json": json_module,
