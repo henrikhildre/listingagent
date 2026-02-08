@@ -34,7 +34,10 @@ RULES:
      counts, and description norms.
   2. Target buyer persona — affects tone and vocabulary.
   3. Brand voice / tone — casual, professional, luxurious, playful, etc.
-  4. Pricing approach — only ask if prices are NOT already in the data.
+  4. Pricing approach — the AI will suggest a price for each listing, so ask \
+     how the seller wants prices estimated (e.g. markup from cost, match \
+     competitors, fixed price tiers). If retail prices are already in the data, \
+     confirm whether the seller wants to keep them or have the AI re-estimate.
   5. Mandatory mentions — sustainability, shipping info, care instructions, etc.
   6. Description structure — paragraphs vs. bullet points, long vs. short.
 - Wrap up proactively as soon as you have enough information. Do NOT drag out \
@@ -94,7 +97,7 @@ def _build_data_context(data_model: dict) -> str:
                 f"- Prices already provided: yes (range ${min(prices):.2f} - ${max(prices):.2f})"
             )
         else:
-            lines.append("- Prices already provided: no")
+            lines.append("- Prices already provided: no (AI will need to suggest prices — ask the seller how to estimate them)")
 
         # Check if images exist
         has_images = any(p.get("image_files") for p in products)
