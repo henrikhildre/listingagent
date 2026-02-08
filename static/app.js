@@ -1078,12 +1078,14 @@ async function buildDataModel() {
 async function startInterview(existingProgress) {
     state.phase = 'INTERVIEW';
     updatePhaseIndicator('INTERVIEW');
+
+    // Remove old progress so the new one appears below the phase banner
+    if (existingProgress) removeInlineProgress(existingProgress);
     addPhaseBanner('INTERVIEW');
 
     setChatInputEnabled(false);
 
-    const progress = existingProgress || showInlineProgress('Preparing interview questions...');
-    updateInlineProgress(progress, 'AI is preparing interview questions...');
+    const progress = showInlineProgress('AI is preparing interview questions...');
 
     try {
         // Send a special initial message to trigger the interview
@@ -1908,15 +1910,20 @@ function renderFieldBar(field, completeness, stats) {
  */
 function renderProductRow(product, nameField) {
     const name = product[nameField] || product.name || product.sku || product.id;
+    const category = nameField !== 'Category' && product.Category ? product.Category : '';
     const hasImage = product.image_files && product.image_files.length > 0;
     const imageIcon = hasImage
-        ? '<svg class="w-3 h-3 text-green-500 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
-        : '<svg class="w-3 h-3 text-slate-300 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>';
+        ? '<svg class="w-3 h-3 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
+        : '<svg class="w-3 h-3 text-slate-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>';
+    const categoryBadge = category
+        ? `<span class="text-[10px] text-slate-400 shrink-0">${escapeHtml(category)}</span>`
+        : '';
 
     return `
         <div class="context-item flex items-center gap-2 min-w-0">
             ${imageIcon}
-            <span class="text-sm truncate">${escapeHtml(String(name))}</span>
+            <span class="text-sm truncate flex-1">${escapeHtml(String(name))}</span>
+            ${categoryBadge}
         </div>
     `;
 }
@@ -1945,11 +1952,14 @@ function renderDataModelSection() {
         }
     }
 
-    // Product list
-    const nameField = fieldsDiscovered.find(f => {
-        const s = fieldStats[f];
-        return s && s.type === 'text';
-    });
+    // Product list — prefer descriptive fields over generic ones
+    const namePreference = ['item', 'name', 'title', 'product_name', 'product', 'description', 'sku'];
+    const nameField = namePreference.find(n => fieldsDiscovered.includes(n))
+        || fieldsDiscovered.find(f => {
+            const s = fieldStats[f];
+            return s && s.type === 'text' && s.unique_count === products.length;
+        })
+        || fieldsDiscovered.find(f => fieldStats[f]?.type === 'text');
     let productsHtml = products.slice(0, 8)
         .map(p => renderProductRow(p, nameField))
         .join('');
@@ -1974,9 +1984,15 @@ function renderDataModelSection() {
         `;
     }
 
+    const imgCount = products.filter(p => p.image_files && p.image_files.length > 0).length;
+    const productDesc = imgCount > 0
+        ? `Extracted from your data \u00b7 ${imgCount}/${products.length} with images`
+        : 'Extracted from your data';
+
     return `
         <div class="context-section">
             <div class="context-section-title">Products (${products.length})</div>
+            <div class="text-xs text-slate-400 mb-2">${productDesc}</div>
             ${productsHtml}
             ${unmatchedHtml}
         </div>
