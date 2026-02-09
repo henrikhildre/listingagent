@@ -1026,7 +1026,7 @@ def _basic_validation(listing: dict, style_profile: dict) -> dict:
     if len(tags) < 3:
         issues.append(f"Too few tags ({len(tags)})")
 
-    raw_price = listing.get("suggested_price", 0)
+    raw_price = listing.get("suggested_price") or listing.get("price", 0)
     try:
         price = float(_re.sub(r"[^\d.]", "", str(raw_price)))
     except (ValueError, TypeError):
