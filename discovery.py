@@ -1037,6 +1037,7 @@ IMPORTANT RULES:
 - Do NOT hardcode row counts or values from the sample.
 - Handle edge cases: empty cells, mixed types, encoding oddities.
 - Every product must have a unique "id" (e.g., "product_001", "product_002").
+- NEVER use leading-zero integer literals like 042 or 007 — they are invalid Python 3. Use 42, 7 etc.
 
 Return your script inside a single ```python code block."""
 
@@ -1283,23 +1284,28 @@ def _try_local_fix(script: str, errors: list[str]) -> str | None:
 
     # Keep fixing if there are more offending lines (LLM may use
     # leading zeros in multiple places)
+    made_change = True  # we already changed at least one line above
     for _ in range(20):  # safety bound
         try:
             ast.parse(fixed_script)
             return fixed_script
         except SyntaxError as e2:
             if not e2.lineno or "leading zeros" not in str(e2):
-                return None  # different error, bail
+                # Different error — return what we have if we fixed
+                # any leading zeros. The LLM retry will handle the
+                # remaining syntax issue without re-introducing zeros.
+                return fixed_script if made_change else None
             idx = e2.lineno - 1
             if not (0 <= idx < len(lines)):
-                return None
+                return fixed_script if made_change else None
             orig = lines[idx]
             lines[idx] = re.sub(r'(?<!["\'\w])0+(\d+)(?!["\'\w])', r'\1', orig)
             if lines[idx] == orig:
-                return None  # can't fix this line
+                return fixed_script if made_change else None
+            made_change = True
             fixed_script = "\n".join(lines)
 
-    return None
+    return fixed_script if made_change else None
 
 
 async def _fix_extraction_script(
@@ -1341,6 +1347,8 @@ Keep the same interface:
 - NEVER use open() — data is already provided as a string variable.
   For CSV: `df = pd.read_csv(io.StringIO({data_var}))`
   For JSON: `data = json.loads({data_var})`
+
+NEVER use leading-zero integer literals like 042 or 007 — they are invalid Python 3.
 
 Return the fixed script inside a single ```python code block."""
 
