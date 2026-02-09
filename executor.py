@@ -169,8 +169,8 @@ async def _process_product(
             except Exception as e:
                 logger.warning("Word count fix-up failed for %s: %s", product_id, e)
 
-    # Validate (structural checks only — content quality was proven during recipe testing)
-    validation = run_validation(listing, style_profile, "")
+    # Validate using recipe's own validation code (falls back to basic checks if empty)
+    validation = run_validation(listing, style_profile, recipe.get("validation_code", ""))
     validation = soften_word_count_issues(validation, style_profile)
 
     if validation.get("passed", False):
@@ -242,8 +242,8 @@ async def _process_product(
             "error": str(e),
         }
 
-    # Validate retry result (structural checks only)
-    retry_validation = run_validation(listing, style_profile, "")
+    # Validate retry result using recipe's validation code
+    retry_validation = run_validation(listing, style_profile, recipe.get("validation_code", ""))
     retry_validation = soften_word_count_issues(retry_validation, style_profile)
 
     return {
